@@ -406,7 +406,7 @@ function vOverview() {
     <div class="rail" style="grid-template-columns:repeat(${S.d.phases.length || 1},minmax(0,1fr))" aria-label="Build progress by phase">${S.d.phases.map(ph => `<div class="${ph.status === 'current' ? 'cur' : ph.status}" title="${esc(ph.name)}"><i></i></div>`).join('')}</div>
     <div class="rail-foot"><span>${cp ? `<span class="ital now">${rom(S.d.phases.indexOf(cp))}</span> ${esc(short(cp.name))}${cp.end_date ? ` <span class="muted-h">· through ${fd(cp.end_date)}</span>` : ''}` : 'Schedule to be set'}</span><a href="#timeline" class="rail-link"><b class="num">${progressOf(S.d.phases)}%</b> complete →</a></div>
   </section>
-
+  ${pmNote()}
   <div class="grid2">
     <section>
       <div class="sec-h"><h2>${isStaff() ? 'Needs attention' : 'Awaiting your attention'}</h2><span class="aside">${items.length} item${items.length === 1 ? '' : 's'}</span></div>
@@ -775,6 +775,19 @@ function emailPanel() {
 
 const VIEWS = { diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
+/* ================= note from the project manager ================= */
+function pmNote() {
+  const p = P(), by = S.profiles[p.pm_note_by] || pm(), age = p.pm_note_at ? Math.floor((Date.now() - new Date(p.pm_note_at)) / 864e5) : null;
+  const who = by ? (by.full_name || by.email) : L.projectLead;
+  if (!p.pm_note) return isStaff() ? `<section class="pm-note empty-note"><div><span class="eyebrow">A note from you</span><p class="muted">A sentence or two at the top of ${esc(clientFirst())}’s home: what’s happening this week, and anything they should know.</p></div><button class="btn" data-act="note-pm">Write a note</button></section>` : '';
+  return `<section class="pm-note">
+    <div class="pm-note-head"><span class="av">${ini(who)}</span><div><span class="eyebrow">A note from ${esc(who.split(' ')[0])}</span><div class="small muted">${esc(by?.title || L.projectLead)} · ${ft(p.pm_note_at)}</div></div>
+      ${isStaff() ? `<button class="edit-link" data-act="note-pm">Update note</button>` : ''}</div>
+    <p class="pm-note-text">${esc(p.pm_note)}</p>
+    ${isStaff() && age >= 14 ? `<p class="small" style="color:var(--brass)">This note is ${age} days old. A quick update keeps ${esc(clientFirst())} in the loop.</p>` : ''}
+  </section>`;
+}
+
 /* ================= welcome tour ================= */
 const ART = {
   home: '<polyline points="14,40 60,10 106,40"/><rect x="22" y="38" width="76" height="36"/><path d="M52 74V58a8 8 0 0 1 16 0v16"/><rect x="30" y="46" width="12" height="12"/><rect x="78" y="46" width="12" height="12"/><line x1="4" y1="74" x2="116" y2="74" class="t"/>',
@@ -853,6 +866,17 @@ async function act(a, el) {
   switch (a) {
     case 'modal-close': closeModal(); break;
     case 'print': window.print(); break;
+    case 'note-pm':
+      modal(`<span class="eyebrow">Note to ${esc(clientFirst())}</span><h2>What should they know?</h2>
+        <p class="small muted">Shown at the top of their overview with today’s date. Keep it to a few sentences: what’s happening, what’s next, anything they should plan for.</p>
+        <div class="field"><label for="pmn">Your note</label><textarea id="pmn" rows="5" maxlength="600" placeholder="Drywall starts Monday. The house will be closed to visits that week.">${esc(P().pm_note || '')}</textarea></div>
+        <div class="row" style="justify-content:flex-end">${P().pm_note ? `<button class="edit-link" data-act="note-pm-clear" style="margin-right:auto">Remove note</button>` : ''}<button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="note-pm-save">Save note</button></div>`); break;
+    case 'note-pm-save': {
+      const t = val('pmn'); if (!t) { toast('Write a sentence or two first'); $('#pmn').focus(); break; }
+      must(await sb.from('projects').update({ pm_note: t, pm_note_at: new Date().toISOString(), pm_note_by: S.me.id }).eq('id', S.pid));
+      await log('left a note on the overview', 'overview'); closeModal(); await refresh(['project', 'activity']); toast(`Note saved. ${clientFirst()} will see it at the top of their home.`); break; }
+    case 'note-pm-clear':
+      must(await sb.from('projects').update({ pm_note: null, pm_note_at: null, pm_note_by: null }).eq('id', S.pid)); closeModal(); await refresh(['project']); toast('Note removed'); break;
     case 'tour-next': S.tour.i++; drawTour(); break;
     case 'tour-back': S.tour.i--; drawTour(); break;
     case 'tour': showTour(el.dataset.role, false); break;

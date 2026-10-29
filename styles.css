@@ -543,3 +543,14 @@ h1{font-size:clamp(38px,5.4vw,62px)}
 .tour-body{min-height:268px}
 .tour-foot .row{flex-wrap:nowrap}
 @media (max-width:720px){ .tour-body{min-height:0} .tour-foot .btn{padding:10px 14px} .tour-foot .btn.primary{white-space:nowrap} }
+
+/* ===== note from the project manager ===== */
+.pm-note{margin:-24px 0 56px;padding:30px clamp(22px,4vw,56px) 32px;background:var(--surface);border:1px solid var(--line);border-top:0;display:grid;gap:14px}
+.pm-note-head{display:flex;gap:14px;align-items:center}
+.pm-note-head > div{flex:1;min-width:0}
+.pm-note-head .av{width:46px;height:46px;font-size:16px}
+.pm-note-text{font-family:var(--f-display);font-size:clamp(21px,2.2vw,25px);line-height:1.45;max-width:64ch;border-left:1px solid var(--brass);padding-left:20px}
+.pm-note.empty-note{display:flex;justify-content:space-between;align-items:center;gap:16px 28px;flex-wrap:wrap;border-style:dashed;border-top:1px dashed var(--line);margin-top:-24px}
+.pm-note.empty-note p{margin-top:6px;max-width:60ch}
+.hero:has(+ .pm-note){margin-bottom:24px}
+@media (max-width:720px){ .pm-note{margin:-24px 0 40px} .pm-note-text{padding-left:14px} }
