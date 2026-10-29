@@ -43,6 +43,20 @@ const wordmark = () => B.logo
 /* ================= helpers ================= */
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+// Plain-English glossary: escape text and turn the first mention of each known term into a tappable word
+const GLOSS = (B.glossary || []).map((g, i) => ({ ...g, i }));
+const GLOSS_RE = (() => {
+  const words = GLOSS.flatMap(g => [g.term, ...(g.also || [])].map(w => [w, g.i])).sort((a, b) => b[0].length - a[0].length);
+  if (!words.length) return null;
+  const map = {}; words.forEach(([w, i]) => { map[w.toLowerCase()] = i; });
+  return { re: new RegExp('\\b(' + words.map(([w]) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')\\b', 'gi'), map };
+})();
+const gloss = text => {
+  const h = esc(text); if (!GLOSS_RE) return h;
+  const seen = new Set();
+  return h.replace(GLOSS_RE.re, m => { const i = GLOSS_RE.map[m.toLowerCase()]; if (i == null || seen.has(i)) return m; seen.add(i);
+    return `<button type="button" class="term" data-act="term" data-k="${i}" aria-label="${esc(m)}: what this means">${m}</button>`; });
+};
 const today = () => { const n = new Date(); return new Date(n.getFullYear(), n.getMonth(), n.getDate()); };
 const isoToday = () => { const t = today(); return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`; };
 const D = iso => { if (!iso) return null; const [y,m,d] = iso.slice(0,10).split('-').map(Number); return new Date(y, m-1, d); };
@@ -266,7 +280,7 @@ function actionItems() {
 
 /* ================= chrome ================= */
 const PRIMARY = [['overview','Overview'],['timeline','Timeline'],['updates','From the site'],['decisions','Decisions'],['messages','Messages']];
-const MORE = [['diary','Photo diary'],['walls','Behind the walls'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['team','Your team']];
+const MORE = [['diary','Photo diary'],['walls','Behind the walls'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['glossary','Glossary'],['team','Your team']];
 const DEC = [['questions','Questions'],['selections','Selections'],['changes','Change orders']];
 const isDec = v => DEC.some(d => d[0] === v);
 const ICONS = {
@@ -447,8 +461,8 @@ function vOverview() {
     ${cp ? `<section class="card" style="background:var(--surface-2);border-color:transparent">
       <span class="eyebrow">This phase, explained</span>
       <h3 style="font-size:26px;margin:10px 0 14px">${esc(cp.name)}</h3>
-      ${cp.what ? `<p style="margin-bottom:12px">${esc(cp.what)}</p>` : ''}
-      ${cp.decisions ? `<p class="small"><span class="eyebrow" style="letter-spacing:.16em">Your decisions</span><br>${esc(cp.decisions)}</p>` : ''}
+      ${cp.what ? `<p style="margin-bottom:12px">${gloss(cp.what)}</p>` : ''}
+      ${cp.decisions ? `<p class="small"><span class="eyebrow" style="letter-spacing:.16em">Your decisions</span><br>${gloss(cp.decisions)}</p>` : ''}
       <a href="#timeline" class="small" style="display:inline-block;margin-top:16px">Every phase, explained</a>
     </section>` : ''}
   </div>`;
@@ -463,7 +477,7 @@ function vTimeline() {
     return `<div class="phase ${ph.status === 'current' ? 'cur' : ph.status}"><div class="numr">${rom(i)}</div><div class="body">
       <button class="phase-head" data-act="ph-toggle" data-id="${ph.id}" aria-expanded="${open}"><span><h3>${esc(ph.name)}</h3><span class="dates">${ph.start_date ? fd(ph.start_date) + ' – ' + fd(ph.end_date) : 'Dates to be scheduled'}${ups.length ? ` · ${ups.length} update${ups.length > 1 ? 's' : ''}` : ''}</span></span>${tag}</button>
       ${open ? `<div class="phase-detail">
-        <div class="explain"><div><span class="eyebrow">What happens</span>${esc(ph.what || '—')}</div><div><span class="eyebrow">When you visit</span>${esc(ph.look || '—')}</div><div><span class="eyebrow">Your decisions</span>${esc(ph.decisions || '—')}</div></div>
+        <div class="explain"><div><span class="eyebrow">What happens</span>${gloss(ph.what || '—')}</div><div><span class="eyebrow">When you visit</span>${gloss(ph.look || '—')}</div><div><span class="eyebrow">Your decisions</span>${gloss(ph.decisions || '—')}</div></div>
         ${pics.length ? `<div class="photos">${pics.map(photoBtn).join('')}</div>` : ''}
         ${isStaff() ? `<div class="row">${ph.status === 'current' ? `<button class="btn primary sm" data-act="ph-complete" data-id="${ph.id}">Mark complete & start next</button>` : ph.status === 'upcoming' ? `<button class="btn sm" data-act="ph-start" data-id="${ph.id}">Start this phase</button>` : ''}<button class="btn sm ghost" data-act="ph-edit" data-id="${ph.id}">Edit phase</button></div>` : ''}
       </div>` : ''}
@@ -477,7 +491,7 @@ function vUpdates() {
     const ph = photosOf(u.id), cm = S.d.update_comments.filter(c => c.update_id === u.id), th = S.d.update_thanks.filter(t => t.update_id === u.id), mine = th.some(t => t.user_id === S.me.id);
     return `<article class="post">
       <div class="post-h"><span class="av">${ini(nameOf(u.author_id))}</span><div class="who"><b>${esc(nameOf(u.author_id))}</b><span class="meta">${ft(u.created_at)}</span></div>${phaseById(u.phase_id) ? `<span class="tag">${esc(short(phaseById(u.phase_id).name))}</span>` : ''}</div>
-      ${u.body ? `<p class="text">${esc(u.body)}</p>` : ''}
+      ${u.body ? `<p class="text">${gloss(u.body)}</p>` : ''}
       ${mosaic(ph)}
       ${ph.length > 3 ? `<div class="photos">${ph.slice(3).map(photoBtn).join('')}</div>` : ''}
       <div class="post-f"><button class="btn sm ${mine ? 'primary' : 'ghost'}" data-act="thanks" data-id="${u.id}">${mine ? 'Thanked' : 'Thank the team'}${th.length ? ` · ${th.length}` : ''}</button><span>${cm.length} comment${cm.length === 1 ? '' : 's'}</span>${isStaff() ? `<span style="flex:1"></span><button class="edit-link" data-act="up-del" data-id="${u.id}">Delete</button>` : ''}</div>
@@ -502,8 +516,8 @@ function vQuestions() {
     ${open.length ? open.map(q => `
       <article class="card q">
         <div class="spread"><span class="small muted">${esc(nameOf(q.asked_by))} · ${ft(q.created_at)}</span><span class="tag ${(daysTo(q.due_date) ?? 99) <= 3 ? 'brass' : ''}">Answer ${dueText(q.due_date)}</span></div>
-        <p class="qtext">${esc(q.question)}</p>
-        ${q.why ? `<div class="blocker">${esc(q.why)}</div>` : ''}
+        <p class="qtext">${gloss(q.question)}</p>
+        ${q.why ? `<div class="blocker">${gloss(q.why)}</div>` : ''}
         ${!isStaff() ? `
           ${q.options?.length ? `<div class="quick">${q.options.map(o => `<button data-act="q-quick" data-id="${q.id}" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
           <div class="field"><label for="qa-${q.id}">Your answer</label><textarea id="qa-${q.id}" placeholder="Choose above or write your own"></textarea></div>
@@ -616,7 +630,7 @@ function vSelections() {
     return `<section class="sel">
       <button class="sel-head" data-act="sel-toggle" data-id="${s.id}" aria-expanded="${isOpen}">
         <span><h3>${esc(s.category)}</h3><span class="small muted">${esc(s.area || '')}${+s.allowance ? ` · allowance <span class="num">${money(s.allowance)}</span>` : ''}${pick && !isOpen ? ` · <span class="ital">${esc(pick.name)}</span>` : ''}${!pick && favCount && !isOpen ? ` · ${favCount} favorite${favCount > 1 ? 's' : ''}` : ''}</span></span>${tag}</button>
-      ${isOpen ? `${s.note ? `<p class="muted" style="margin-top:14px;font-family:var(--f-display);font-style:italic;font-size:17px">${esc(s.note)}</p>` : ''}
+      ${isOpen ? `${s.note ? `<p class="muted" style="margin-top:14px;font-family:var(--f-display);font-style:italic;font-size:17px">${gloss(s.note)}</p>` : ''}
         ${opts.length ? `<div class="sel-tools">${opts.length > 1 ? `<div class="seg" role="group" aria-label="View"><button data-act="sel-view" data-id="${s.id}" data-v="grid" aria-pressed="${!cmp}">Gallery</button><button data-act="sel-view" data-id="${s.id}" data-v="compare" aria-pressed="${!!cmp}">Compare</button></div>` : '<span></span>'}
           ${!isStaff() ? `<button class="edit-link" data-act="sel-ask" data-id="${s.id}">Ask the ${esc(L.designCenter)}</button>` : ''}</div>
           ${cmp ? compareTable(s) : `<div class="opts">${opts.map(o => optCard(s, o)).join('')}</div>`}`
@@ -649,7 +663,7 @@ function vChanges() {
       <div class="stack" style="gap:8px;min-width:0">
         <div class="row" style="gap:10px"><span class="eyebrow" style="color:var(--muted)">CO-${String(c.number).padStart(2,'0')}</span>${c.status === 'approved' ? '<span class="tag good">Signed</span>' : c.status === 'declined' ? '<span class="tag bad">Declined</span>' : '<span class="tag solid">Awaiting signature</span>'}</div>
         <h3>${esc(c.title)}</h3>
-        ${c.details ? `<p class="muted" style="max-width:60ch">${esc(c.details)}</p>` : ''}
+        ${c.details ? `<p class="muted" style="max-width:60ch">${gloss(c.details)}</p>` : ''}
         <span class="small muted">Prepared by ${esc(nameOf(c.created_by))} · ${ft(c.created_at)}${c.signature ? ` · signed <span class="ital" style="color:var(--ink);font-size:16px">${esc(c.signature)}</span> by ${esc(nameOf(c.signed_by))}, ${ft(c.signed_at)}` : ''}${c.decline_note ? ` · “${esc(c.decline_note)}”` : ''}</span>
       </div>
       <div class="amt">
@@ -756,6 +770,45 @@ function vWalkthrough() {
       </section>
     </div>
   </div>`;
+}
+
+function vGlossary() {
+  const groups = [...new Set(GLOSS.map(g => g.group || 'More'))];
+  return pageHead('Glossary', 'Building terms, <span class="ital">in plain English</span>', 'The words your team uses, explained. Wherever you see a word with a dotted underline in your portal, tap it for the same explanation.') + `
+  <div class="gloss-tools">
+    <div class="field"><input class="input" id="gloss-q" type="search" placeholder="Look up a word" value="${esc(S.ui.glossQ || '')}" aria-label="Look up a word" autocomplete="off"></div>
+    <nav class="gloss-jump" aria-label="Sections">${groups.map((g, i) => `<button type="button" data-act="gloss-jump" data-v="${i}">${esc(g)}</button>`).join('')}</nav>
+  </div>
+  <div id="gloss-list">${glossList()}</div>`;
+}
+function glossList() {
+  const q = (S.ui.glossQ || '').trim().toLowerCase();
+  const groups = [...new Set(GLOSS.map(g => g.group || 'More'))];
+  const hits = GLOSS.filter(g => !q || [g.term, ...(g.also || []), g.def].join(' ').toLowerCase().includes(q))
+    .sort((a, b) => q ? (+!a.term.toLowerCase().startsWith(q) - +!b.term.toLowerCase().startsWith(q)) : 0);
+  if (!hits.length) return `<div class="empty">No match for “${esc(S.ui.glossQ)}”. <a href="#messages">Ask ${esc(firstName(pm()?.id) || 'your team')}</a> and we’ll explain.</div>`;
+  return groups.map((grp, gi) => { const items = hits.filter(g => (g.group || 'More') === grp); return items.length ? `<section class="gloss-group" id="gg-${gi}"><span class="eyebrow">${esc(grp)}</span>
+    <dl>${items.map(g => `<div class="gloss-item${S.ui.glossFocus === g.i ? ' lit' : ''}" id="term-${g.i}"><dt>${esc(g.term)}</dt><dd>${esc(g.def)}</dd></div>`).join('')}</dl></section>` : ''; }).join('');
+}
+function showTerm(el) {
+  const g = GLOSS[+el.dataset.k]; if (!g) return;
+  let p = $('#term-pop');
+  if (!p) { p = document.createElement('div'); p.id = 'term-pop'; p.className = 'term-pop'; p.setAttribute('role', 'tooltip'); document.body.appendChild(p); }
+  if (!p.hidden && p.dataset.k === el.dataset.k) { p.hidden = true; return; }
+  p.dataset.k = el.dataset.k;
+  p.innerHTML = `<b>${esc(g.term)}</b><p>${esc(g.def)}</p><a href="#glossary" data-term="${g.i}">All terms</a>`;
+  p.hidden = false;
+  const r = el.getBoundingClientRect(), w = Math.min(320, innerWidth - 32);
+  p.style.width = w + 'px';
+  p.style.left = Math.max(16, Math.min(r.left + r.width / 2 - w / 2, innerWidth - w - 16)) + 'px';
+  const h = p.offsetHeight, below = r.bottom + 10;
+  p.style.top = (below + h > innerHeight - 16 && r.top - h - 10 > 16 ? r.top - h - 10 : below) + 'px';
+}
+const hideTerm = () => { const p = $('#term-pop'); if (p) p.hidden = true; };
+function focusTerm() {
+  const i = S.ui.glossFocus; if (i == null) return;
+  const el = $(`#term-${i}`); if (!el) return;
+  el.scrollIntoView({ block: 'center' }); setTimeout(() => { S.ui.glossFocus = null; el.classList.remove('lit'); }, 2600);
 }
 
 function vTeam() {
@@ -897,7 +950,7 @@ function wallForm(room) {
 }
 const keepWallDraft = () => { S.wallDraftRoom = val('wf-room'); S.wallDraftCap = val('wf-cap'); };
 
-const VIEWS = { walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
+const VIEWS = { glossary: vGlossary, walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
 /* ================= note from the project manager ================= */
 function pmNote() {
@@ -907,7 +960,7 @@ function pmNote() {
   return `<section class="pm-note">
     <div class="pm-note-head"><span class="av">${ini(who)}</span><div><span class="eyebrow">A note from ${esc(who.split(' ')[0])}</span><div class="small muted">${esc(by?.title || L.projectLead)} · ${ft(p.pm_note_at)}</div></div>
       ${isStaff() ? `<button class="edit-link" data-act="note-pm">Update note</button>` : ''}</div>
-    <p class="pm-note-text">${esc(p.pm_note)}</p>
+    <p class="pm-note-text">${gloss(p.pm_note)}</p>
     ${isStaff() && age >= 14 ? `<p class="small" style="color:var(--brass)">This note is ${age} days old. A quick update keeps ${esc(clientFirst())} in the loop.</p>` : ''}
   </section>`;
 }
@@ -933,7 +986,7 @@ function tourSteps(role) {
     { art: 'home', eyebrow: 'Welcome', title: `Welcome home${me ? ', ' + esc(me) : ''}`, text: `This is your private window into <b>${home}</b>. Everything about your build lives here, from first drawings to the day you receive your keys.`,
       extra: lead ? `<div class="tour-lead"><span class="av">${ini(lead.full_name || lead.email)}</span><div><b>${esc(lead.full_name || lead.email)}</b><div class="small muted">${esc(lead.title || L.projectLead)}, your point of contact</div></div></div>` : '' },
     { art: 'photos', eyebrow: 'From the site', title: 'Watch it come <span class="ital">together</span>', text: `Your team shares photographs and notes from the site as work happens. Each Friday we’ll email you a short summary of the week, and every photo is gathered into your photo diary, a keepsake for ${esc(L.closing.toLowerCase())}.` },
-    { art: 'decide', eyebrow: 'Decisions', title: 'When we need you, <span class="ital">it’s here</span>', text: `Questions, finish selections, and change orders live under <b>Decisions</b>, each with the date it’s needed and why. We’ll remind you before anything is due, and nothing in your agreement changes until you sign.` },
+    { art: 'decide', eyebrow: 'Decisions', title: 'When we need you, <span class="ital">it’s here</span>', text: `Questions, finish selections, and change orders live under <b>Decisions</b>, each with the date it’s needed and why. We’ll remind you before anything is due, and nothing in your agreement changes until you sign. New to a building term? Tap any word with a dotted underline.` },
     { art: 'team', eyebrow: 'Your team', title: 'We’re a tap <span class="ital">away</span>', text: `Message your team anytime, request a private site visit or a ${esc(L.designCenter)} session, and note anything you notice for your ${esc(L.finalTour.toLowerCase())}.`,
       extra: `<p class="tour-tip"><b>Keep it handy:</b> on iPhone, tap Share, then Add to Home Screen. It opens like an app.</p>`, done: 'Enter your home' },
   ];
@@ -1015,6 +1068,8 @@ async function act(a, el) {
           <div class="row">${i > 0 ? `<button class="btn sm ghost" data-act="wall-open" data-id="${list[i - 1].id}" aria-label="Previous photo">←</button>` : ''}${i < list.length - 1 ? `<button class="btn sm ghost" data-act="wall-open" data-id="${list[i + 1].id}" aria-label="Next photo">→</button>` : ''}<a class="btn sm ghost" href="${esc(S.urls[w.path])}" target="_blank" rel="noopener">Full size</a><button class="btn sm ghost" data-act="modal-close">Close</button></div></div>
         <img src="${esc(S.urls[w.path])}" alt="${esc(w.room)}" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">
         <div class="row" style="justify-content:space-between"><div class="row" style="gap:6px">${w.systems.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><span class="small muted">${list.length > 1 ? `${i + 1} of ${list.length} · ` : ''}Photographed ${fd(w.taken_on, { month: 'long', day: 'numeric', year: 'numeric' })}${isStaff() ? ` · <button class="edit-link" data-act="wall-del" data-id="${w.id}">Delete</button>` : ''}</span></div>`, true); break; }
+    case 'term': showTerm(el); break;
+    case 'gloss-jump': { const t = $(`#gg-${el.dataset.v}`); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + scrollY - 90, behavior: 'smooth' }); break; }
     case 'wall-del': {
       if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; }
       const w = S.d.wall_photos.find(x => x.id === id);
@@ -1346,6 +1401,8 @@ async function sendMsg() {
 /* ================= events ================= */
 document.addEventListener('click', async e => {
   if (e.target.closest('.sheet-list a')) closeModal();
+  const tl = e.target.closest('[data-term]'); if (tl) { S.ui.glossFocus = +tl.dataset.term; S.ui.glossQ = ''; hideTerm(); if (location.hash === '#glossary') { e.preventDefault(); render(); focusTerm(); } }
+  if (!e.target.closest('#term-pop') && !e.target.closest('.term')) hideTerm();
   const el = e.target.closest('[data-act]');
   [['#pop','#bell'], ['#acct-pop','.acct-btn'], ['#more-pop','.more-btn']].forEach(([s, t]) => { const p = $(s); if (p && !p.hidden && !e.target.closest(s) && !e.target.closest(t)) p.hidden = true; });
   if (!el || el.disabled || el.dataset.busy) return;
@@ -1357,13 +1414,16 @@ document.addEventListener('click', async e => {
   finally { if (el.isConnected) { delete el.dataset.busy; el.disabled = false; } }
 });
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') closeModal();
+  if (e.key === 'Escape') { if ($('#term-pop') && !$('#term-pop').hidden) { hideTerm(); return; } closeModal(); }
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('.opt[data-act]')) { e.preventDefault(); e.target.click(); }
   if (S.tour && $('#modal .tour')) { if (e.key === 'ArrowRight' && $('[data-act="tour-next"]')) act('tour-next', {}); if (e.key === 'ArrowLeft' && $('[data-act="tour-back"]')) act('tour-back', {}); }
   if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'msg-in') { e.preventDefault(); sendMsg().catch(err => toast(err.message)); }
   if (e.key === 'Enter' && !e.shiftKey && e.target.id?.startsWith('c-')) { e.preventDefault(); act('c-send', { dataset: { id: e.target.id.slice(2) } }).catch(err => toast(err.message)); }
 });
+window.addEventListener('scroll', () => hideTerm(), { passive: true });
+window.addEventListener('resize', () => hideTerm());
 document.addEventListener('input', e => {
+  if (e.target.id === 'gloss-q') { S.ui.glossQ = e.target.value; $('#gloss-list').innerHTML = glossList(); }
   if (e.target.id === 'doc-q') { S.ui.docQ = e.target.value; $('#doc-rows').innerHTML = docRows(); }
   if (e.target.id === 'wall-q') { S.ui.wallQ = e.target.value; const pos = e.target.selectionStart; render(true); const i = $('#wall-q'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
 });
@@ -1411,7 +1471,7 @@ window.addEventListener('hashchange', async () => {
   if (!VIEWS[h] && h !== 'decisions') return;
   if (!S.d && S.pid) await loadProject(S.pid);
   if (!S.d) return;
-  closeModal(); if (resolveView(h) !== 'walls') S.ui.wallRoom = null; S.view = resolveView(h); render(); window.scrollTo(0, 0);
+  closeModal(); hideTerm(); if (resolveView(h) !== 'walls') S.ui.wallRoom = null; S.view = resolveView(h); render(); window.scrollTo(0, 0); if (S.view === 'glossary') focusTerm();
   if (h === 'messages') refresh(['messages']);
 });
 
@@ -1423,3 +1483,4 @@ if (CFG.supabaseUrl.startsWith('SUPABASE')) {
   start().catch(err => { console.error(err); $('#app').innerHTML = `<div class="wrap auth"><div class="auth-card">${wordmark()}<p class="inline-err">${esc(err.message || 'Could not load the portal.')}</p><button class="btn" data-act="signout">Sign out</button></div></div>`; });
 }
 })();
+

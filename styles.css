@@ -617,3 +617,24 @@ h1{font-size:clamp(38px,5.4vw,62px)}
 .wall-room-head{align-items:center}
 .wf-actions{justify-content:flex-end}
 @media (max-width:560px){.wf-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.wf-actions .btn{width:100%;justify-content:center}.wf-actions .btn.primary{grid-column:1/-1;order:-1}}
+
+/* ---------- plain-English glossary ---------- */
+.term{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:help;text-decoration:underline dotted;text-decoration-color:var(--brass);text-decoration-thickness:1.5px;text-underline-offset:3px;display:inline;text-align:inherit;letter-spacing:inherit;line-height:inherit}
+.term:hover,.term:focus-visible{color:var(--brass);outline:none}
+.term-pop{position:fixed;z-index:200;background:var(--surface);color:var(--ink);border:1px solid var(--line);border-top:2px solid var(--brass);box-shadow:0 18px 40px -18px rgba(0,0,0,.35);padding:16px 18px 14px;font-family:var(--f-body);text-align:left}
+.term-pop b{display:block;font-family:var(--f-display);font-weight:500;font-size:21px;line-height:1.2;margin-bottom:6px}
+.term-pop p{font-size:14.5px;line-height:1.55;color:var(--ink);margin:0 0 10px}
+.term-pop a{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--brass);text-decoration:none}
+.gloss-tools{display:flex;flex-wrap:wrap;gap:12px 28px;align-items:flex-end;justify-content:space-between;margin-bottom:28px;position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 0}
+.gloss-tools .field{flex:0 1 300px;margin:0}
+.gloss-jump{display:flex;flex-wrap:wrap;gap:4px 18px}
+.gloss-jump button{background:none;border:0;padding:4px 0;font:inherit;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);cursor:pointer}
+.gloss-jump button:hover{color:var(--ink)}
+.gloss-group{margin-bottom:44px;scroll-margin-top:90px}
+.gloss-group dl{margin:12px 0 0;display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:0 48px}
+.gloss-item{padding:18px 0;border-top:1px solid var(--line);transition:background .6s}
+.gloss-item dt{font-family:var(--f-display);font-size:22px;line-height:1.2;margin-bottom:6px}
+.gloss-item dd{margin:0;color:var(--muted);line-height:1.6;max-width:60ch}
+.gloss-item.lit{background:var(--brass-soft);box-shadow:-12px 0 0 var(--brass-soft),12px 0 0 var(--brass-soft)}
+@media (max-width:640px){.gloss-jump{display:none}.gloss-tools .field{flex:1 1 100%}.gloss-group dl{grid-template-columns:1fr}}
+@media print{.term{text-decoration:none}.term-pop{display:none}}
