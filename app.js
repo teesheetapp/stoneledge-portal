@@ -168,6 +168,7 @@ async function start(skipFlow) {
   else S.view = resolveView(hash);
   if (S.pid && S.view !== 'homes') await loadProject(S.pid);
   render();
+  if (!S.me.welcomed_at && (S.d || isStaff())) showTour(isStaff() ? 'staff' : 'client', true);
   clearInterval(S.poll);
   S.poll = setInterval(() => { if (document.visibilityState === 'visible' && S.pid && S.view === 'messages') refresh(['messages']); }, 20000);
 }
@@ -774,6 +775,47 @@ function emailPanel() {
 
 const VIEWS = { diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
+/* ================= welcome tour ================= */
+const ART = {
+  home: '<polyline points="14,40 60,10 106,40"/><rect x="22" y="38" width="76" height="36"/><path d="M52 74V58a8 8 0 0 1 16 0v16"/><rect x="30" y="46" width="12" height="12"/><rect x="78" y="46" width="12" height="12"/><line x1="4" y1="74" x2="116" y2="74" class="t"/>',
+  photos: '<rect x="30" y="14" width="64" height="46" class="t"/><rect x="22" y="22" width="64" height="46"/><polyline points="26,62 44,44 56,54 66,46 82,62"/><circle cx="72" cy="34" r="5"/>',
+  decide: '<rect x="34" y="8" width="52" height="66"/><line x1="44" y1="22" x2="76" y2="22" class="t"/><line x1="44" y1="30" x2="76" y2="30" class="t"/><line x1="44" y1="38" x2="66" y2="38" class="t"/><polyline points="46,52 54,60 72,44"/><path d="M42 68c6-6 10 2 16-3s8 3 14-1" class="t"/>',
+  team: '<path d="M14 16h56v32H36l-12 10V48H14z"/><path d="M50 34h56v32H96v10L84 66H50z" class="t"/><line x1="24" y1="28" x2="58" y2="28" class="t"/><line x1="24" y1="36" x2="48" y2="36" class="t"/>',
+  homes: '<polyline points="8,40 24,28 40,40"/><rect x="12" y="38" width="24" height="22"/><polyline points="44,34 60,20 76,34"/><rect x="48" y="32" width="24" height="28"/><polyline points="80,40 96,28 112,40"/><rect x="84" y="38" width="24" height="22"/><line x1="4" y1="60" x2="116" y2="60" class="t"/>',
+};
+function tourSteps(role) {
+  const me = (S.me.full_name || '').split(' ')[0];
+  if (role === 'staff') return [
+    { art: 'home', eyebrow: B.fullName, title: `Welcome${me ? ', ' + esc(me) : ''}`, text: `This is your client portal. Clients see a calm, branded view of their home; you see the tools that keep it current.` },
+    { art: 'photos', eyebrow: 'From the site', title: 'Post in a few <span class="ital">taps</span>', text: `Tap <b>Post update</b> on any screen, take a few photos, and add a sentence. It goes into Friday’s email automatically, or you can email clients right away.` },
+    { art: 'decide', eyebrow: 'Decisions', title: 'Ask, and they <span class="ital">answer</span>', text: `Questions, selections, and change orders live under Decisions. Clients are emailed when you send one and reminded before it’s due. You’re emailed when they respond.` },
+    { art: 'homes', eyebrow: 'All homes', title: 'Every build in <span class="ital">one place</span>', text: `All homes shows each build’s progress and what’s waiting. Invite clients and teammates from Your team.`, done: 'Get started' },
+  ];
+  const home = S.d ? esc(P().name) : 'your home', lead = S.d ? pm() : null;
+  return [
+    { art: 'home', eyebrow: 'Welcome', title: `Welcome home${me ? ', ' + esc(me) : ''}`, text: `This is your private window into <b>${home}</b>. Everything about your build lives here, from first drawings to the day you receive your keys.`,
+      extra: lead ? `<div class="tour-lead"><span class="av">${ini(lead.full_name || lead.email)}</span><div><b>${esc(lead.full_name || lead.email)}</b><div class="small muted">${esc(lead.title || L.projectLead)}, your point of contact</div></div></div>` : '' },
+    { art: 'photos', eyebrow: 'From the site', title: 'Watch it come <span class="ital">together</span>', text: `Your team shares photographs and notes from the site as work happens. Each Friday we’ll email you a short summary of the week, and every photo is gathered into your photo diary, a keepsake for ${esc(L.closing.toLowerCase())}.` },
+    { art: 'decide', eyebrow: 'Decisions', title: 'When we need you, <span class="ital">it’s here</span>', text: `Questions, finish selections, and change orders live under <b>Decisions</b>, each with the date it’s needed and why. We’ll remind you before anything is due, and nothing in your agreement changes until you sign.` },
+    { art: 'team', eyebrow: 'Your team', title: 'We’re a tap <span class="ital">away</span>', text: `Message your team anytime, request a private site visit or a ${esc(L.designCenter)} session, and note anything you notice for your ${esc(L.finalTour.toLowerCase())}.`,
+      extra: `<p class="tour-tip"><b>Keep it handy:</b> on iPhone, tap Share, then Add to Home Screen. It opens like an app.</p>`, done: 'Enter your home' },
+  ];
+}
+function showTour(role, firstTime) {
+  S.tour = { role, i: 0 };
+  drawTour();
+  if (firstTime) { S.me.welcomed_at = new Date().toISOString(); sb.from('profiles').update({ welcomed_at: S.me.welcomed_at }).eq('id', S.me.id).then(() => {}); }
+}
+function drawTour() {
+  const st = tourSteps(S.tour.role), i = S.tour.i, s = st[i], last = i === st.length - 1;
+  modal(`<div class="tour-art"><svg viewBox="0 0 120 80" aria-hidden="true">${ART[s.art]}</svg></div>
+    <div class="tour-body"><span class="eyebrow">${s.eyebrow}</span><h2>${s.title}</h2><p>${s.text}</p>${s.extra || ''}</div>
+    <div class="tour-foot"><div class="tour-dots" aria-label="Step ${i + 1} of ${st.length}">${st.map((_, j) => `<i class="${j === i ? 'on' : ''}"></i>`).join('')}</div>
+      <div class="row">${i ? `<button class="btn ghost sm" data-act="tour-back">Back</button>` : `<button class="linkbtn" data-act="modal-close">Skip</button>`}
+      <button class="btn primary" data-act="${last ? 'modal-close' : 'tour-next'}" id="tour-go">${last ? s.done : 'Next'}</button></div></div>`);
+  $('#modal .dialog').classList.add('tour');
+}
+
 /* ================= forms in modals ================= */
 function homeForm(p = {}) {
   const f = (id, label, v, type = 'text', cls = '') => `<div class="field ${cls}"><label for="${id}">${label}</label><input id="${id}" type="${type}" value="${esc(v ?? '')}"></div>`;
@@ -811,6 +853,9 @@ async function act(a, el) {
   switch (a) {
     case 'modal-close': closeModal(); break;
     case 'print': window.print(); break;
+    case 'tour-next': S.tour.i++; drawTour(); break;
+    case 'tour-back': S.tour.i--; drawTour(); break;
+    case 'tour': showTour(el.dataset.role, false); break;
     case 'email-preview': {
       el.textContent = 'Preparing';
       const { data, error } = await sb.functions.invoke('notify', { body: { mode: 'preview', project_id: S.pid } });
@@ -833,6 +878,8 @@ async function act(a, el) {
       pop.innerHTML = `<div style="padding:8px"><b>${esc(S.me.full_name || '')}</b><div class="small muted">${esc(S.me.email || '')}</div></div>
         ${!isStaff() && S.projects.length > 1 ? S.projects.map(p => `<button class="pop-item" style="width:100%;border-left:0;border-right:0;border-bottom:0;background:none;cursor:pointer;text-align:left" data-act="home-open" data-id="${p.id}">${esc(p.name)}</button>`).join('') : ''}
         <button class="pop-item" style="width:100%;border-left:0;border-right:0;border-bottom:0;background:none;cursor:pointer;text-align:left" data-act="me-edit">Your details</button>
+        ${isStaff() && S.d ? `<button class="pop-item" style="width:100%;border-left:0;border-right:0;border-bottom:0;background:none;cursor:pointer;text-align:left" data-act="tour" data-role="client">Client welcome tour</button>` : ''}
+        <button class="pop-item" style="width:100%;border-left:0;border-right:0;border-bottom:0;background:none;cursor:pointer;text-align:left" data-act="tour" data-role="${isStaff() ? 'staff' : 'client'}">${isStaff() ? 'Builder welcome tour' : 'Welcome tour'}</button>
         <button class="pop-item" style="width:100%;border-left:0;border-right:0;border-bottom:0;background:none;cursor:pointer;text-align:left" data-act="signout">Sign out</button>`;
       pop.hidden = false; break; }
     case 'me-edit':
@@ -1101,6 +1148,7 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
+  if (S.tour && $('#modal .tour')) { if (e.key === 'ArrowRight' && $('[data-act="tour-next"]')) act('tour-next', {}); if (e.key === 'ArrowLeft' && $('[data-act="tour-back"]')) act('tour-back', {}); }
   if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'msg-in') { e.preventDefault(); sendMsg().catch(err => toast(err.message)); }
   if (e.key === 'Enter' && !e.shiftKey && e.target.id?.startsWith('c-')) { e.preventDefault(); act('c-send', { dataset: { id: e.target.id.slice(2) } }).catch(err => toast(err.message)); }
 });

@@ -518,3 +518,28 @@ h1{font-size:clamp(38px,5.4vw,62px)}
 .email-log{max-height:420px;overflow:auto}
 .email-frame{width:100%;height:70vh;border:1px solid var(--line);background:#F1F0EC}
 .field > label.switch{text-transform:none;letter-spacing:0;font-size:14.5px;color:var(--ink);font-weight:400}
+
+/* ===== welcome tour ===== */
+.dialog.tour{width:min(520px,calc(100vw - 32px));padding:0;gap:0;border-top:0;overflow:hidden}
+.tour-art{background:var(--navy);display:grid;place-items:center;padding:34px 0 30px}
+.tour-art svg{width:150px;height:auto;fill:none;stroke:var(--brass-bright);stroke-width:1.2;stroke-linejoin:round;stroke-linecap:round}
+.tour-art svg .t{stroke:var(--navy-muted)}
+.tour-body{padding:30px 34px 6px;display:grid;gap:12px;min-height:220px;align-content:start}
+.tour-body h2{font-size:clamp(30px,4vw,38px)}
+.tour-body p{color:var(--muted);font-size:15.5px;line-height:1.65}
+.tour-body p b{color:var(--ink);font-weight:500}
+.tour-lead{display:flex;gap:14px;align-items:center;margin-top:6px;padding-top:16px;border-top:1px solid var(--line)}
+.tour-lead .av{width:46px;height:46px;font-size:16px}
+.tour-tip{font-size:14px!important;background:var(--surface-2);padding:12px 14px;margin-top:4px}
+.tour-foot{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:20px 34px 28px}
+.tour-dots{display:flex;gap:6px}
+.tour-dots i{width:18px;height:2px;background:var(--line);display:block}
+.tour-dots i.on{background:var(--brass)}
+@media (max-width:720px){
+  .dialog.tour{top:auto;bottom:0;transform:translateX(-50%);width:100%;max-width:100%;padding-bottom:env(safe-area-inset-bottom,0px)}
+  .tour-body{padding:24px 22px 4px;min-height:0}
+  .tour-foot{padding:18px 22px 22px}
+}
+.tour-body{min-height:268px}
+.tour-foot .row{flex-wrap:nowrap}
+@media (max-width:720px){ .tour-body{min-height:0} .tour-foot .btn{padding:10px 14px} .tour-foot .btn.primary{white-space:nowrap} }
