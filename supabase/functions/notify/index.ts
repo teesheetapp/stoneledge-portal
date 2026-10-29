@@ -3,6 +3,7 @@
 //   instant   — every few minutes: new decisions for clients, client actions and messages for the team
 //   reminders — daily: decisions coming due, unsigned change orders
 //   digest    — Fridays: "Your home this week"
+//   morning   — weekday mornings: one summary for team members who chose it, instead of an email per item
 // Staff can also call { mode: "preview", project_id } with their own sign-in to see this week's email.
 // Emails go out only when RESEND_API_KEY and FROM_EMAIL are set; otherwise they are logged as previews.
 // Demo addresses (example.com) are never emailed.
@@ -28,14 +29,14 @@ const first = (n?: string | null) => (n || "").split(" ")[0] || "there";
 const isoWeek = () => { const d = new Date(today() + "T12:00:00Z"); const day = (d.getUTCDay() + 6) % 7; d.setUTCDate(d.getUTCDate() - day + 3); const y = d.getUTCFullYear(); const w1 = new Date(Date.UTC(y, 0, 4)); return `${y}-W${String(1 + Math.round(((+d - +w1) / 864e5 - 3 + ((w1.getUTCDay() + 6) % 7)) / 7)).padStart(2, "0")}`; };
 const ROM = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII","XIII","XIV","XV"];
 
-type Profile = { id: string; email: string; full_name: string | null; role: string; builder_id: string; email_updates: boolean; email_digest: boolean; phone?: string | null; title?: string | null };
+type Profile = { id: string; email: string; full_name: string | null; role: string; builder_id: string; email_updates: boolean; email_digest: boolean; email_mode?: string | null; phone?: string | null; title?: string | null };
 type Ctx = { projects: Map<string, any>; builders: Map<string, any>; profiles: Map<string, Profile>; members: Map<string, string[]> };
 
 async function loadCtx(): Promise<Ctx> {
   const [pr, bu, pf, mm] = await Promise.all([
     admin.from("projects").select("*").eq("archived", false),
     admin.from("builders").select("*"),
-    admin.from("profiles").select("id,email,full_name,role,builder_id,email_updates,email_digest,phone,title"),
+    admin.from("profiles").select("id,email,full_name,role,builder_id,email_updates,email_digest,email_mode,phone,title"),
     admin.from("project_members").select("project_id,user_id"),
   ]);
   const members = new Map<string, string[]>();
@@ -48,12 +49,16 @@ async function loadCtx(): Promise<Ctx> {
   };
 }
 const clientsOf = (c: Ctx, pid: string) => (c.members.get(pid) || []).map((id) => c.profiles.get(id)).filter((p): p is Profile => !!p && !!p.email);
-function teamFor(c: Ctx, pid: string): Profile[] {
+function teamFor(c: Ctx, pid: string, area?: string | null): Profile[] {
   const p = c.projects.get(pid); if (!p) return [];
+  const assigned = area && p.duties?.[area] && c.profiles.get(p.duties[area]);
+  if (assigned) return [assigned];
   const pm = p.pm_id && c.profiles.get(p.pm_id);
   if (pm) return [pm];
   return [...c.profiles.values()].filter((x) => x.builder_id === p.builder_id && x.role === "admin");
 }
+// Team members to email right now: those who chose a morning summary only hear about urgent items immediately
+const teamNow = (c: Ctx, pid: string, area?: string | null, urgent = false) => teamFor(c, pid, area).filter((u) => u.email_updates && (urgent || u.email_mode !== "daily"));
 const isClient = (c: Ctx, id: string | null) => !!id && c.profiles.get(id)?.role === "client";
 const nameOf = (c: Ctx, id: string | null) => (id && (c.profiles.get(id)?.full_name || c.profiles.get(id)?.email)) || "Your team";
 
@@ -143,7 +148,7 @@ async function instant(c: Ctx) {
         title: `${esc(first(to.full_name))}, we need <em>your answer</em>`,
         body: quote(esc(x.question)) + (x.why ? P_(`<span style="color:#7D6744">${esc(x.why)}</span>`) : "") + (x.due_date ? P_(`Please answer by <b>${fd(x.due_date)}</b>.`) : "") + (x.options?.length ? P_(`You can choose from ${x.options.map((o: string) => `<i>${esc(o)}</i>`).join(", ")}, or write your own answer.`) : ""),
         cta: { label: "Answer now", url: link(b, "questions") } }), pm?.email);
-    if (x.status === "answered" && x.answered_at >= since) for (const to of teamFor(c, x.project_id).filter((u) => u.email_updates))
+    if (x.status === "answered" && x.answered_at >= since) for (const to of (x.asked_by && !isClient(c, x.asked_by) && c.profiles.get(x.asked_by) ? [c.profiles.get(x.asked_by)!] : teamFor(c, x.project_id)).filter((u) => u.email_updates && u.email_mode !== "daily"))
       await send(c, to, x.project_id, "answered", x.id, `${nameOf(c, x.answered_by)} answered: ${x.question.split(/[:?]/)[0]}`, layout(b, p, {
         preheader: x.answer, eyebrow: p.name, title: `${esc(first(nameOf(c, x.answered_by)))} <em>answered</em>`,
         body: P_(`<span style="color:#67696B">${esc(x.question)}</span>`) + quote(esc(x.answer)), cta: { label: "Open the home", url: link(b, "questions") } }));
@@ -157,7 +162,7 @@ async function instant(c: Ctx) {
         preheader: `${signed(x.amount)}${x.days ? ` · ${x.days} days added` : ""}. Nothing changes until you sign.`, eyebrow: `Change order ${no}`, title: esc(x.title),
         body: (x.details ? P_(esc(x.details)) : "") + rows([["Price change", signed(x.amount)], ["Schedule", x.days ? `${x.days} day${x.days > 1 ? "s" : ""} added` : "No change"]]) + P_(`<span style="color:#67696B;font-size:14px">Nothing changes until you review and sign.</span>`),
         cta: { label: "Review and sign", url: link(b, "changes") } }), teamFor(c, x.project_id)[0]?.email);
-    if (["approved", "declined"].includes(x.status) && x.signed_at >= since) for (const to of teamFor(c, x.project_id).filter((u) => u.email_updates))
+    if (["approved", "declined"].includes(x.status) && x.signed_at >= since) for (const to of teamNow(c, x.project_id))
       await send(c, to, x.project_id, "co_" + x.status, x.id, `${nameOf(c, x.signed_by)} ${x.status === "approved" ? "signed" : "declined"} ${no}: ${x.title}`, layout(b, p, {
         preheader: x.status === "approved" ? `Signed ${esc(x.signature)}.` : (x.decline_note || "Declined."), eyebrow: p.name,
         title: `${no} <em>${x.status === "approved" ? "signed" : "declined"}</em>`,
@@ -177,7 +182,7 @@ async function instant(c: Ctx) {
     }
     if (x.status === "submitted" && x.submitted_at >= since) {
       const o = os.find((z) => z.id === x.chosen_option_id);
-      for (const to of teamFor(c, x.project_id).filter((u) => u.email_updates))
+      for (const to of teamNow(c, x.project_id, "selections"))
         await send(c, to, x.project_id, "chosen", x.id + ":" + x.submitted_at, `${nameOf(c, x.submitted_by)} chose ${o?.name || "an option"} for ${x.category}`, layout(b, p, {
           preheader: "Ready for you to confirm and order.", eyebrow: p.name, title: `${esc(x.category)}: <em>${esc(o?.name || "chosen")}</em>`,
           body: P_(`${esc(nameOf(c, x.submitted_by))} submitted a selection.`) + (o && +x.allowance ? rows([["Price", money(o.price)], ["Allowance", money(x.allowance)], ["Difference", signed(o.price - x.allowance)]]) : ""),
@@ -199,7 +204,7 @@ async function instant(c: Ctx) {
   for (const x of msgs.data || []) {
     const { p, b } = ctxOf(x.project_id); if (!p || !b) continue;
     const th = (threads.data || []).find((t) => t.id === x.thread_id);
-    const recips = (isClient(c, x.author_id) ? teamFor(c, x.project_id) : clientsOf(c, x.project_id)).filter((u) => u.email_updates && u.id !== x.author_id);
+    const recips = (isClient(c, x.author_id) ? teamNow(c, x.project_id, /design/i.test(th?.name || "") ? "selections" : null) : clientsOf(c, x.project_id).filter((u) => u.email_updates)).filter((u) => u.id !== x.author_id);
     for (const to of recips) {
       const { data: recent } = await admin.from("notifications").select("id").eq("user_id", to.id).eq("kind", "message").eq("project_id", x.project_id).gte("created_at", new Date(Date.now() - 15 * 60e3).toISOString()).limit(1);
       if (recent?.length) continue; // they were just emailed about this conversation
@@ -211,7 +216,7 @@ async function instant(c: Ctx) {
 
   for (const x of evs.data || []) {
     const { p, b } = ctxOf(x.project_id); if (!p || !b) continue;
-    for (const to of teamFor(c, x.project_id).filter((u) => u.email_updates))
+    for (const to of teamNow(c, x.project_id, "visits"))
       await send(c, to, x.project_id, "request", x.id, `${nameOf(c, x.requested_by)} requested a ${x.kind.toLowerCase()}`, layout(b, p, {
         preheader: `${fd(x.starts_on)}${x.time_label ? ", " + x.time_label.toLowerCase() : ""}.`, eyebrow: p.name, title: `${esc(x.kind)} <em>requested</em>`,
         body: rows([["Preferred date", fd(x.starts_on)], ["Time of day", esc(x.time_label || "Any")]]) + (x.note ? quote(esc(x.note)) : ""), cta: { label: "Confirm in the calendar", url: link(b, "calendar") } }));
@@ -220,7 +225,7 @@ async function instant(c: Ctx) {
   for (const x of warr.data || []) {
     const { p, b } = ctxOf(x.project_id); if (!p || !b) continue;
     const no = `W-${String(x.number).padStart(2, "0")}`, img = x.photos?.length ? await signedUrl(x.photos[0]) : undefined;
-    if (x.created_at >= since && isClient(c, x.created_by)) for (const to of teamFor(c, x.project_id).filter((u) => u.email_updates))
+    if (x.created_at >= since && isClient(c, x.created_by)) for (const to of teamNow(c, x.project_id, "warranty", x.urgency === "urgent"))
       await send(c, to, x.project_id, "warranty", x.id, `${x.urgency === "urgent" ? "Urgent: " : ""}${no} warranty request from ${first(nameOf(c, x.created_by))}: ${x.title}`, layout(b, p, {
         preheader: [x.room, x.details].filter(Boolean).join(" · ").slice(0, 120) || "A new warranty request.", eyebrow: `Warranty ${no}${x.urgency === "urgent" ? " · urgent" : ""}`, title: esc(x.title), hero: img,
         body: rows([["Home", esc(p.name)], ["Where", esc(x.room || "Not given")], ["From", esc(nameOf(c, x.created_by))]]) + (x.details ? quote(esc(x.details)) : "") + (x.photos?.length > 1 ? P_(`${x.photos.length} photos attached.`) : ""),
@@ -240,7 +245,7 @@ async function instant(c: Ctx) {
   for (const x of notes.data || []) {
     if (!isClient(c, x.author_id)) continue;
     const { p, b } = ctxOf(x.project_id); if (!p || !b) continue;
-    for (const to of teamFor(c, x.project_id).filter((u) => u.email_updates))
+    for (const to of teamNow(c, x.project_id, "notes"))
       await send(c, to, x.project_id, "note", x.id, `New note from ${nameOf(c, x.author_id)}${x.room ? ` · ${x.room}` : ""}`, layout(b, p, {
         preheader: x.body.slice(0, 120), eyebrow: x.room || p.name, title: `A note from <em>${esc(first(nameOf(c, x.author_id)))}</em>`,
         body: quote(esc(x.body)), cta: { label: "Review notes", url: link(b, "walkthrough") } }));
@@ -329,12 +334,54 @@ async function digestFor(c: Ctx, pid: string, to: Profile | null, preview = fals
 async function digest(c: Ctx) {
   const wk = isoWeek();
   for (const pid of c.projects.keys()) {
+    const p = c.projects.get(pid);
+    if (p?.closing_date && p.closing_date < addDays(today(), -14)) continue; // moved in: no weekly build email
     const tos = clientsOf(c, pid).filter((u) => u.email_digest);
     if (!tos.length) continue;
     for (const to of tos) {
       const d = await digestFor(c, pid, to);
       if (d) await send(c, to, pid, "digest", wk, d.subject, d.html, d.pm?.email);
     }
+  }
+}
+
+// ---------- morning summary for the team ----------
+async function morning(c: Ctx) {
+  const day = today(), since = new Date(Date.now() - 26 * 3600e3).toISOString();
+  const staff = [...c.profiles.values()].filter((u) => u.role !== "client" && u.email && u.email_updates && u.email_mode === "daily");
+  const pids = [...c.projects.keys()]; if (!staff.length || !pids.length) return;
+  const q = (t: string) => admin.from(t).select("*").in("project_id", pids);
+  const [sels, opts, evs, notes, warr, msgs, threads, qs, cos] = await Promise.all([
+    q("selections").eq("status", "submitted"), q("selection_options"), q("events").eq("status", "requested"), q("notes").eq("reviewed", false),
+    q("warranty_requests").eq("status", "new"), q("messages").order("created_at", { ascending: false }).limit(500), q("threads"),
+    q("questions").eq("status", "answered").gte("answered_at", since), q("change_orders").in("status", ["approved", "declined"]).gte("signed_at", since)]);
+  type Item = { pid: string; area: string | null; owner?: string; k: string; t: string; d: string };
+  const items: Item[] = [], fyi: Item[] = [];
+  const owner = (pid: string, area: string | null) => { const p = c.projects.get(pid); return (area && p?.duties?.[area]) || p?.pm_id; };
+  for (const r of warr.data || []) items.push({ pid: r.project_id, area: "warranty", k: r.urgency === "urgent" ? "Urgent warranty" : "Warranty", t: `W-${String(r.number).padStart(2, "0")} · ${r.title}`, d: r.room || "" });
+  const last: Record<string, any> = {}; for (const m of msgs.data || []) if (!last[m.thread_id]) last[m.thread_id] = m;
+  for (const m of Object.values(last)) if (isClient(c, m.author_id)) { const th = (threads.data || []).find((t) => t.id === m.thread_id);
+    items.push({ pid: m.project_id, area: /design/i.test(th?.name || "") ? "selections" : null, k: "Reply", t: m.body.length > 90 ? m.body.slice(0, 90) + "…" : m.body, d: first(nameOf(c, m.author_id)) }); }
+  for (const x of sels.data || []) items.push({ pid: x.project_id, area: "selections", k: "Confirm", t: x.category, d: `chose ${(opts.data || []).find((o) => o.id === x.chosen_option_id)?.name || "an option"}` });
+  for (const e of evs.data || []) items.push({ pid: e.project_id, area: "visits", k: "Visit request", t: e.title.replace(" (requested)", ""), d: fd(e.starts_on, { weekday: "short", month: "short", day: "numeric" }) });
+  for (const n of notes.data || []) if (isClient(c, n.author_id)) items.push({ pid: n.project_id, area: "notes", k: "Note", t: n.body.slice(0, 90), d: n.room || "" });
+  for (const x of qs.data || []) fyi.push({ pid: x.project_id, area: null, owner: !isClient(c, x.asked_by) ? x.asked_by : undefined, k: "Answered", t: `${first(nameOf(c, x.answered_by))}: ${x.answer}`, d: x.question.split(/[:?]/)[0] });
+  for (const x of cos.data || []) fyi.push({ pid: x.project_id, area: null, k: x.status === "approved" ? "Signed" : "Declined", t: `CO-${String(x.number).padStart(2, "0")} · ${x.title}`, d: first(nameOf(c, x.signed_by)) });
+  const sans = `Jost, 'Avenir Next', Helvetica, Arial, sans-serif`;
+  const label = (s: string) => `<div style="font-family:${sans};font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:#7D6744;margin:26px 0 8px">${s}</div>`;
+  for (const to of staff) {
+    const mineOf = (xs: Item[]) => xs.filter((i) => c.projects.get(i.pid)?.builder_id === to.builder_id && (i.owner || owner(i.pid, i.area)) === to.id);
+    const mine = mineOf(items), news = mineOf(fyi);
+    if (!mine.length && !news.length) continue;
+    const b = c.builders.get(to.builder_id); if (!b) continue;
+    const homes = [...new Set([...mine, ...news].map((i) => i.pid))];
+    const body = P_(mine.length ? `${mine.length} thing${mine.length > 1 ? "s" : ""} need${mine.length > 1 ? "" : "s"} you${homes.length > 1 ? ` across ${homes.length} homes` : ""} this morning.` : "Nothing needs you this morning. Here is what happened since yesterday.") +
+      homes.map((pid) => { const its = mine.filter((i) => i.pid === pid), ns = news.filter((i) => i.pid === pid);
+        return label(esc(c.projects.get(pid)?.name || "")) + rows([...its, ...ns].map((i) => [`<b style="font-weight:500">${esc(i.k)}</b> · ${esc(i.t)}`, esc(i.d)] as [string, string])); }).join("");
+    const n = mine.length;
+    await send(c, to, homes[0], "morning", day, n ? `Today: ${n} thing${n > 1 ? "s" : ""} need${n > 1 ? "" : "s"} you` : "Today: all caught up", layout(b, { name: b.settings?.from_name || b.name }, {
+      preheader: mine.slice(0, 3).map((i) => i.t).join(" · ").slice(0, 120) || "Since yesterday", eyebrow: fd(day), title: `Good morning, <em>${esc(first(to.full_name))}</em>`, body,
+      cta: { label: "Open Today", url: link(b, "homes") } }));
   }
 }
 
@@ -362,10 +409,12 @@ Deno.serve(async (req) => {
 
   const c = await loadCtx();
   const mode = body.mode || "instant";
+  for (const k of Object.keys(results)) delete results[k];
   try {
     if (mode === "instant") await instant(c);
     else if (mode === "reminders") await reminders(c);
     else if (mode === "digest") await digest(c);
+    else if (mode === "morning") await morning(c);
     else return json({ error: "Unknown mode" }, 400);
   } catch (e) {
     console.error(e);

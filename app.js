@@ -201,6 +201,9 @@ async function loadProjects() {
       S.homeStats[id] = { progress: progressOf(phases), current: phases.find(x => x.status === 'current'),
         open: (qs.data || []).filter(x => x.project_id === id).length + (co.data || []).filter(x => x.project_id === id).length };
     });
+    if (!S.profiles || !Object.keys(S.profiles).length) S.profiles = Object.fromEntries(must(await sb.from('profiles').select('id,full_name,title,phone,email,role,builder_id')).map(p => [p.id, p]));
+    S.ui.tdAll = store.get('portal.td.all') === '1';
+    await loadToday().catch(e => { console.error(e); S.today = null; });
   }
 }
 
@@ -263,6 +266,10 @@ const selDueSoon = () => S.d.selections.filter(s => s.status === 'open' && (days
 const approvedCOTotal = () => S.d.change_orders.filter(c => c.status === 'approved').reduce((a,c) => a + +c.amount, 0);
 const allowanceVar = st => S.d.selections.filter(s => s.status === st && +s.allowance > 0 && chosen(s)).reduce((a,s) => a + +chosen(s).price - +s.allowance, 0);
 const unseen = () => S.d.activity.filter(a => a.actor_id !== S.me.id && (!S.lastSeen || new Date(a.created_at) > new Date(S.lastSeen)));
+const DUTIES = () => B.duties || [];
+// Who handles an area on this home: the assigned teammate, otherwise the project manager
+const ownerId = area => (P().duties || {})[area] || P().pm_id || pm()?.id;
+const dutiesOf = uid => DUTIES().filter(([k]) => ((P().duties || {})[k] || P().pm_id) === uid).map(([, l]) => l);
 const pm = () => P().pm_id ? S.profiles[P().pm_id] : Object.values(S.profiles).find(p => p.role !== 'client' && p.builder_id === S.me.builder_id);
 const clients = () => S.d.project_members.map(m => S.profiles[m.user_id]).filter(Boolean);
 const clientFirst = () => { const c = clients(); return c.length ? c.map(x => (x.full_name || x.email).split(' ')[0]).join(' & ') : 'the clients'; };
@@ -273,10 +280,10 @@ function actionItems() {
   pendingCOs().forEach(c => items.push({ sort: c.created_at.slice(0,10), k: 'Signature', go: 'changes', t: `CO-${String(c.number).padStart(2,'0')} · ${c.title}`, d: `${signed(c.amount)}${c.days ? ` · ${c.days} days added` : ''} · sent ${ft(c.created_at)}` }));
   selDueSoon().forEach(s => items.push({ sort: s.due_date, k: 'Selection', go: 'selections', t: s.category, d: `${dueText(s.due_date)} · ${fd(s.due_date)}` }));
   if (isStaff()) {
-    S.d.selections.filter(s => s.status === 'submitted').forEach(s => items.push({ sort: s.due_date || '2999-01-01', k: 'Confirm', go: 'selections', t: s.category, d: `${clientFirst()} chose ${chosen(s)?.name || 'an option'}`, mine: true }));
-    S.d.events.filter(e => e.status === 'requested').forEach(e => items.push({ sort: e.starts_on, k: 'Request', go: 'calendar', t: e.title.replace(' (requested)', ''), d: `${fd(e.starts_on)}${e.time_label ? ' · ' + e.time_label : ''}`, mine: true }));
-    openReqs().forEach(r => items.push({ sort: r.urgency === 'urgent' ? '1900-01-01' : r.created_at.slice(0,10), k: r.urgency === 'urgent' ? 'Urgent' : 'Warranty', go: 'warranty', t: `${wNo(r)} · ${r.title}`, d: `${r.room ? r.room + ' · ' : ''}from ${firstName(r.created_by)} · ${ft(r.created_at)}`, mine: true }));
-    S.d.notes.filter(n => !n.reviewed).forEach(n => items.push({ sort: n.created_at.slice(0,10), k: 'Note', go: 'walkthrough', t: n.body.slice(0, 70), d: `${n.room || 'General'} · ${ft(n.created_at)}`, mine: true }));
+    S.d.selections.filter(s => s.status === 'submitted').forEach(s => items.push({ area: 'selections', sort: s.due_date || '2999-01-01', k: 'Confirm', go: 'selections', t: s.category, d: `${clientFirst()} chose ${chosen(s)?.name || 'an option'}`, mine: true }));
+    S.d.events.filter(e => e.status === 'requested').forEach(e => items.push({ area: 'visits', sort: e.starts_on, k: 'Request', go: 'calendar', t: e.title.replace(' (requested)', ''), d: `${fd(e.starts_on)}${e.time_label ? ' · ' + e.time_label : ''}`, mine: true }));
+    openReqs().forEach(r => items.push({ area: 'warranty', sort: r.urgency === 'urgent' ? '1900-01-01' : r.created_at.slice(0,10), k: r.urgency === 'urgent' ? 'Urgent' : 'Warranty', go: 'warranty', t: `${wNo(r)} · ${r.title}`, d: `${r.room ? r.room + ' · ' : ''}from ${firstName(r.created_by)} · ${ft(r.created_at)}`, mine: true }));
+    S.d.notes.filter(n => !n.reviewed).forEach(n => items.push({ area: 'notes', sort: n.created_at.slice(0,10), k: 'Note', go: 'walkthrough', t: n.body.slice(0, 70), d: `${n.room || 'General'} · ${ft(n.created_at)}`, mine: true }));
   }
   return items.sort((a,b) => D(a.sort) - D(b.sort));
 }
@@ -317,10 +324,10 @@ function chrome() {
   const moreCur = MORE.find(m => m[0] === S.view);
   const link = ([v, l]) => { const b = badgeFor(v); return `<a href="#${v}" ${isCur(v) ? 'aria-current="page"' : ''}>${l}${b ? `<sup>${b}</sup>` : ''}</a>`; };
   const moreBadge = badgeFor('more');
-  const nav = inHome ? `${isStaff() ? link(['homes','All homes']) : ''}${PRIMARY.map(link).join('')}
+  const nav = inHome ? `${isStaff() ? link(['homes','Today']) : ''}${PRIMARY.map(link).join('')}
       <span class="more"><button class="more-btn" data-act="more" aria-haspopup="true" ${moreCur ? 'aria-current="page"' : ''}>${moreCur ? esc(moreCur[1]) : 'More'}${moreBadge ? `<sup>${moreBadge}</sup>` : ''}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
       <div class="pop more-pop" id="more-pop" hidden>${MORE.map(([v, l]) => { const b = badgeFor(v); return `<a href="#${v}" class="pop-item">${l}${b ? `<sup>${b}</sup>` : ''}</a>`; }).join('')}</div></span>`
-    : (isStaff() ? link(['homes','All homes']) : '');
+    : (isStaff() ? link(['homes','Today']) : '');
   const tab = (v, l) => { const b = badgeFor(v); return `<a href="#${v}" ${isCur(v) ? 'aria-current="page"' : ''}>${icon(v)}<span>${l}</span>${b ? `<i class="tb-badge">${b}</i>` : ''}</a>`; };
   return `
   <header class="mast"><div class="wrap">
@@ -390,9 +397,9 @@ const ELEV = `<svg class="elev" viewBox="0 0 960 270" role="img" aria-label="Fro
   <circle class="t" cx="908" cy="160" r="44"/><line class="t" x1="908" y1="204" x2="908" y2="226"/></svg>`;
 
 /* ================= views ================= */
-function vHomes() {
-  return pageHead(esc(B.fullName), 'Your <span class="ital">homes</span>', `Every home in progress. Open one to post updates, ask for decisions, and keep ${esc(L.client.toLowerCase())}s informed.`, `<button class="btn primary" data-act="home-new">New home</button>`) +
-  (S.projects.length ? `<div class="homes">${S.projects.map(p => { const st = S.homeStats[p.id] || {}; return `
+function vHomes() { return vToday(); }
+function homesGrid() {
+  return (S.projects.length ? `<div class="homes">${S.projects.map(p => { const st = S.homeStats[p.id] || {}; return `
     <button class="home-card" data-act="home-open" data-id="${p.id}">
       <span class="eyebrow">${esc(p.lot || p.address || 'New home')}</span>
       <h3>${esc(p.name)}</h3>
@@ -822,8 +829,13 @@ function vTeam() {
   <div class="people">${staff.map(p => `<section class="card person"><span class="av">${ini(p.full_name || p.email)}</span><div><h3>${esc(p.full_name || p.email)}</h3><span class="eyebrow">${esc(p.title || (p.role === 'admin' ? 'Principal' : 'Team'))}</span></div>
     ${p.phone ? `<div class="copyline"><span>${esc(p.phone)}</span><button class="btn sm ghost" data-act="copy" data-v="${esc(p.phone)}">Copy</button></div>` : ''}
     ${p.email ? `<div class="copyline small muted"><span>${esc(p.email)}</span></div>` : ''}
+    ${(() => { const d = (P().duties ? DUTIES().filter(([k]) => P().duties[k] === p.id).map(([, l]) => l) : []); return d.length ? `<div class="small muted">${p.id === P().pm_id ? 'Also handles' : 'Your contact for'} ${d.map(esc).join(', ').toLowerCase()}</div>` : ''; })()}
     ${p.id === P().pm_id ? `<span class="tag brass" style="align-self:flex-start">${esc(L.projectLead)} for this home</span>` : isStaff() ? `<button class="edit-link" style="align-self:flex-start" data-act="set-pm" data-id="${p.id}">Make ${esc(L.projectLead.toLowerCase())} for this home</button>` : ''}
   </section>`).join('')}</div>
+  ${isStaff() && DUTIES().length ? `<section class="duties"><div class="sec-h"><h2>Who handles what</h2><span class="aside">This home</span></div>
+    <p class="small muted" style="max-width:62ch;margin:-6px 0 14px">Each area’s requests, reminders, and emails go to the person you choose. Anything left on the default goes to ${esc(pm()?.full_name || 'the ' + L.projectLead.toLowerCase())}.</p>
+    <div class="duty-grid">${DUTIES().map(([k, l]) => `<label class="duty"><span>${esc(l)}</span><select class="input" data-change="duty" data-v="${k}">
+      <option value="">${esc(L.projectLead)}${pm() ? ' (' + esc((pm().full_name || '').split(' ')[0]) + ')' : ''}</option>${staff.filter(x => x.id !== P().pm_id).map(x => `<option value="${x.id}"${(P().duties || {})[k] === x.id ? ' selected' : ''}>${esc(x.full_name || x.email)}</option>`).join('')}</select></label>`).join('')}</div></section>` : ''}
   <div class="grid2" style="margin-top:56px">
     <section>
       <div class="sec-h"><h2>${isStaff() ? `${esc(L.client)}s on this home` : 'Visiting the site'}</h2></div>
@@ -1227,18 +1239,96 @@ function warrForm() {
 }
 const keepWarr = () => { if (!$('#wr-title')) return; Object.assign(S.warrDraft, { title: val('wr-title'), room: val('wr-room'), home_item_id: $('#wr-item').value || null, details: $('#wr-details').value.trim() }); };
 
+/* ================= Today: everything that needs the team, across all homes ================= */
+async function loadToday() {
+  const ids = S.projects.map(p => p.id); S.today = null; if (!ids.length) return;
+  const q = (t, cols, f = x => x) => f(sb.from(t).select(cols).in('project_id', ids));
+  const [sels, opts, evs, notes, warr, msgs, threads, qs, cos, ph, ups] = await Promise.all([
+    q('selections', 'id,project_id,category,status,due_date,chosen_option_id,submitted_by,submitted_at'),
+    q('selection_options', 'id,name'),
+    q('events', 'id,project_id,title,starts_on,time_label,status,requested_by,created_at', x => x.eq('status', 'requested')),
+    q('notes', 'id,project_id,author_id,room,body,reviewed,created_at', x => x.eq('reviewed', false)),
+    q('warranty_requests', 'id,project_id,number,title,room,urgency,status,created_by,created_at', x => x.eq('status', 'new')),
+    q('messages', 'id,project_id,thread_id,author_id,body,created_at', x => x.order('created_at', { ascending: false }).limit(400)),
+    q('threads', 'id,project_id,name'),
+    q('questions', 'id,project_id,question,status,due_date,answer,answered_by,answered_at,asked_by,created_at'),
+    q('change_orders', 'id,project_id,number,title,status,amount,signed_by,signed_at,created_at'),
+    q('phases', 'id,project_id,name,status,end_date,position'),
+    q('updates', 'id,project_id,created_at', x => x.order('created_at', { ascending: false }).limit(200)),
+  ]);
+  const d = r => r.data || [], now = Date.now(), ago = iso => (now - new Date(iso)) / 864e5, today = isoToday();
+  const proj = id => S.projects.find(p => p.id === id), isClientId = uid => S.profiles[uid]?.role === 'client';
+  const owner = (pid, area) => { const p = proj(pid); return (area && (p.duties || {})[area]) || p.pm_id; };
+  const first = uid => (S.profiles[uid]?.full_name || 'Client').split(' ')[0];
+  const items = [], waiting = [], fyi = [];
+  d(warr).forEach(r => items.push({ id: 'w' + r.id, pid: r.project_id, area: 'warranty', pri: r.urgency === 'urgent' ? 0 : 1, at: r.created_at, k: r.urgency === 'urgent' ? 'Urgent' : 'Warranty',
+    t: `W-${String(r.number).padStart(2, '0')} · ${r.title}`, d: `${r.room ? r.room + ' · ' : ''}from ${first(r.created_by)}`, acts: [['Open', 'td-open', r.project_id, 'warranty']] }));
+  const lastByThread = {}; d(msgs).forEach(m => { if (!lastByThread[m.thread_id]) lastByThread[m.thread_id] = m; });
+  Object.values(lastByThread).filter(m => isClientId(m.author_id)).forEach(m => { const th = d(threads).find(t => t.id === m.thread_id);
+    items.push({ id: 'm' + m.thread_id, pid: m.project_id, area: /design/i.test(th?.name || '') ? 'selections' : null, pri: 1, at: m.created_at, k: 'Reply', t: m.body.length > 110 ? m.body.slice(0, 110) + '…' : m.body,
+      d: `${first(m.author_id)}${th ? ' · ' + th.name : ''}`, thread: m.thread_id, acts: [['Reply', 'td-reply', m.thread_id]] }); });
+  d(sels).filter(s => s.status === 'submitted').forEach(s => items.push({ id: 's' + s.id, pid: s.project_id, area: 'selections', pri: 1, at: s.submitted_at || s.due_date, k: 'Confirm',
+    t: s.category, d: `${first(s.submitted_by)} chose ${d(opts).find(o => o.id === s.chosen_option_id)?.name || 'an option'}`, acts: [['Confirm', 'td-sel', s.id], ['Open', 'td-open', s.project_id, 'selections']] }));
+  d(evs).forEach(e => items.push({ id: 'e' + e.id, pid: e.project_id, area: 'visits', pri: 1, at: e.created_at, k: 'Visit', t: e.title.replace(' (requested)', ''),
+    d: `${fd(e.starts_on, { weekday: 'short', month: 'short', day: 'numeric' })}${e.time_label ? ' · ' + e.time_label : ''}`, acts: [['Confirm', 'td-ev', e.id], ['Open', 'td-open', e.project_id, 'calendar']] }));
+  d(notes).filter(n => isClientId(n.author_id)).forEach(n => items.push({ id: 'n' + n.id, pid: n.project_id, area: 'notes', pri: 2, at: n.created_at, k: 'Note', t: n.body,
+    d: `${n.room || 'General'} · ${first(n.author_id)}`, acts: [['Reviewed', 'td-note', n.id]] }));
+  d(ph).filter(p => p.status === 'current' && p.end_date && p.end_date < today).forEach(p => items.push({ id: 'p' + p.id, pid: p.project_id, area: null, pri: 2, at: p.end_date, k: 'Schedule',
+    t: `${short(p.name)} was due to finish ${fd(p.end_date)}`, d: 'Mark it complete or adjust the dates so the timeline stays accurate', acts: [['Open', 'td-open', p.project_id, 'timeline']] }));
+  S.projects.forEach(p => { const last = d(ups).find(u => u.project_id === p.id), cur = d(ph).find(x => x.project_id === p.id && x.status === 'current');
+    if (cur && (!last || ago(last.created_at) > 10)) items.push({ id: 'u' + p.id, pid: p.id, area: null, pri: 3, at: last?.created_at || p.created_at, k: 'Post',
+      t: last ? `No site photos in ${Math.floor(ago(last.created_at))} days` : 'No site photos yet', d: 'A few photos and a sentence keeps the Friday email full', acts: [['Post', 'td-post', p.id]] }); });
+  d(qs).filter(x => x.status === 'open' && x.due_date && x.due_date < today).forEach(x => waiting.push({ id: 'q' + x.id, pid: x.project_id, k: 'Question', t: x.question, d: `Was due ${fd(x.due_date)} · reminders sent automatically`, acts: [['Open', 'td-open', x.project_id, 'questions']] }));
+  d(sels).filter(s => s.status === 'open' && s.due_date && s.due_date < today).forEach(s => waiting.push({ id: 'so' + s.id, pid: s.project_id, k: 'Selection', t: s.category, d: `Was due ${fd(s.due_date)}`, acts: [['Open', 'td-open', s.project_id, 'selections']] }));
+  d(cos).filter(c => c.status === 'pending' && ago(c.created_at) > 4).forEach(c => waiting.push({ id: 'c' + c.id, pid: c.project_id, k: 'Signature', t: `CO-${String(c.number).padStart(2, '0')} · ${c.title}`, d: `Sent ${ft(c.created_at)}`, acts: [['Open', 'td-open', c.project_id, 'changes']] }));
+  d(qs).filter(x => x.status === 'answered' && x.answered_at && ago(x.answered_at) < 3).forEach(x => fyi.push({ id: 'qa' + x.id, pid: x.project_id, owner: x.asked_by, at: x.answered_at, t: `${first(x.answered_by)} answered: ${x.answer}`, d: x.question }));
+  d(cos).filter(c => ['approved', 'declined'].includes(c.status) && c.signed_at && ago(c.signed_at) < 3).forEach(c => fyi.push({ id: 'cs' + c.id, pid: c.project_id, at: c.signed_at, t: `${first(c.signed_by)} ${c.status === 'approved' ? 'signed' : 'declined'} CO-${String(c.number).padStart(2, '0')}`, d: c.title }));
+  items.forEach(i => { i.owner = owner(i.pid, i.area); }); fyi.forEach(i => { i.owner = i.owner || owner(i.pid, null); }); waiting.forEach(i => { i.owner = owner(i.pid, null); });
+  S.today = { items: items.sort((a, b) => a.pri - b.pri || new Date(b.at) - new Date(a.at)), waiting, fyi: fyi.sort((a, b) => new Date(b.at) - new Date(a.at)) };
+}
+function tdRow(i) {
+  const p = S.projects.find(x => x.id === i.pid), mine = i.owner === S.me.id;
+  const who = !mine && i.owner ? `<span class="td-who">${esc((S.profiles[i.owner]?.full_name || '').split(' ')[0])}</span>` : '';
+  return `<article class="td-item${i.pri === 0 ? ' urgent' : ''}"><span class="td-k">${esc(i.k)}</span>
+    <div class="td-main"><b>${esc(i.t)}</b><span class="small muted">${esc(p?.name || '')}${i.d ? ' · ' + esc(i.d) : ''}${i.at ? ' · ' + ft(i.at) : ''}</span>${who}
+      ${i.thread && S.ui.tdReply === i.thread ? `<div class="td-reply"><textarea id="td-r" rows="2" placeholder="Reply to ${esc(p?.client_names || 'the client')}"></textarea><div class="row" style="gap:8px;justify-content:flex-end"><button class="btn sm ghost" data-act="td-reply" data-id="">Cancel</button><button class="btn sm primary" data-act="td-send" data-id="${i.thread}" data-v="${i.pid}">Send</button></div></div>` : ''}</div>
+    <div class="td-acts">${i.thread && S.ui.tdReply === i.thread ? '' : (i.acts || []).map(([l, a, id, v], n) => `<button class="btn sm ${n ? 'ghost' : ''}" data-act="${a}" data-id="${id}"${v ? ` data-v="${v}"` : ''}>${l}</button>`).join('')}</div></article>`;
+}
+function vToday() {
+  const T = S.today || { items: [], waiting: [], fyi: [] }, all = S.ui.tdAll, me = S.me.id;
+  const pick = xs => all ? xs : xs.filter(i => i.owner === me);
+  const items = pick(T.items), waiting = pick(T.waiting), fyi = pick(T.fyi), others = T.items.length - pick(T.items).length;
+  const h = new Date().getHours(), firstN = (S.me.full_name || '').split(' ')[0];
+  const homes = new Set(items.map(i => i.pid)).size;
+  const sum = items.length ? `${items.length} thing${items.length > 1 ? 's' : ''} need${items.length > 1 ? '' : 's'} ${all ? 'the team' : 'you'}${homes > 1 ? ` across ${homes} homes` : ''}.` : `Nothing needs ${all ? 'the team' : 'you'} right now.`;
+  return pageHead(esc(B.fullName), `Good ${h < 12 ? 'morning' : h < 17 ? 'afternoon' : 'evening'}${firstN ? `, <span class="ital">${esc(firstN)}</span>` : ''}`,
+    `${sum}${waiting.length ? ` ${waiting.length} waiting on clients, with reminders going out automatically.` : ''}`,
+    `<div class="seg" role="group" aria-label="Show"><button data-act="td-scope" data-v="me" aria-pressed="${!all}">Mine</button><button data-act="td-scope" data-v="all" aria-pressed="${!!all}">Everyone</button></div>`) +
+  `<section class="today">
+    ${items.length ? `<div class="td-list">${items.map(tdRow).join('')}</div>` : `<div class="empty td-empty">${all ? 'The whole team is caught up.' : 'You’re caught up.'}${!all && others ? ` <button class="linkbtn" data-act="td-scope" data-v="all">${others} with teammates</button>` : ''}</div>`}
+    ${fyi.length ? `<details class="td-more" open><summary>Since yesterday <span class="aside">${fyi.length}</span></summary><div class="td-fyi">${fyi.map(i => `<div><b>${esc(i.t)}</b><span class="small muted">${esc(S.projects.find(p => p.id === i.pid)?.name || '')} · ${esc(i.d || '')} · ${ft(i.at)}</span></div>`).join('')}</div></details>` : ''}
+    ${waiting.length ? `<details class="td-more"><summary>Waiting on clients <span class="aside">${waiting.length}</span></summary><div class="td-list quiet">${waiting.map(tdRow).join('')}</div></details>` : ''}
+  </section>
+  <div class="sec-h" style="margin-top:56px"><h2>Homes</h2><button class="btn sm" data-act="home-new">New home</button></div>` + homesGrid();
+}
+
 const VIEWS = { warranty: vWarranty, manual: vManual, glossary: vGlossary, walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
 /* ================= note from the project manager ================= */
 function pmNote() {
+  // Settings: nudgeDays (0 = never remind the PM), hideAfterDays (clients stop seeing a stale note; 0 = never hide)
+  const cfg = { nudgeDays: 0, hideAfterDays: 45, ...(B.pmNote || {}) };
   const p = P(), by = S.profiles[p.pm_note_by] || pm(), age = p.pm_note_at ? Math.floor((Date.now() - new Date(p.pm_note_at)) / 864e5) : null;
-  const who = by ? (by.full_name || by.email) : L.projectLead;
-  if (!p.pm_note) return isStaff() ? `<section class="pm-note empty-note"><div><span class="eyebrow">A note from you</span><p class="muted">A sentence or two at the top of ${esc(clientFirst())}’s home: what’s happening this week, and anything they should know.</p></div><button class="btn" data-act="note-pm">Write a note</button></section>` : '';
+  const who = by ? (by.full_name || by.email) : L.projectLead, stale = cfg.hideAfterDays && age >= cfg.hideAfterDays;
+  if (!p.pm_note || (stale && !isStaff())) return isStaff() && !p.pm_note
+    ? (cfg.nudgeDays ? `<section class="pm-note empty-note"><div><span class="eyebrow">A note from you</span><p class="muted">A sentence or two at the top of ${esc(clientFirst())}’s home: what’s happening this week, and anything they should know.</p></div><button class="btn" data-act="note-pm">Write a note</button></section>`
+      : `<div class="pm-note-add"><button class="edit-link" data-act="note-pm">Add a personal note for ${esc(clientFirst())} (optional)</button></div>`) : '';
   return `<section class="pm-note">
     <div class="pm-note-head"><span class="av">${ini(who)}</span><div><span class="eyebrow">A note from ${esc(who.split(' ')[0])}</span><div class="small muted">${esc(by?.title || L.projectLead)} · ${ft(p.pm_note_at)}</div></div>
       ${isStaff() ? `<button class="edit-link" data-act="note-pm">Update note</button>` : ''}</div>
     <p class="pm-note-text">${gloss(p.pm_note)}</p>
-    ${isStaff() && age >= 14 ? `<p class="small" style="color:var(--brass)">This note is ${age} days old. A quick update keeps ${esc(clientFirst())} in the loop.</p>` : ''}
+    ${isStaff() && stale ? `<p class="small" style="color:var(--brass)">Hidden from ${esc(clientFirst())} because it’s ${age} days old. Update it or remove it.</p>`
+      : isStaff() && cfg.nudgeDays && age >= cfg.nudgeDays ? `<p class="small" style="color:var(--brass)">This note is ${age} days old. A quick update keeps ${esc(clientFirst())} in the loop.</p>` : ''}
   </section>`;
 }
 
@@ -1256,7 +1346,7 @@ function tourSteps(role) {
     { art: 'home', eyebrow: B.fullName, title: `Welcome${me ? ', ' + esc(me) : ''}`, text: `This is your client portal. Clients see a calm, branded view of their home; you see the tools that keep it current.` },
     { art: 'photos', eyebrow: 'From the site', title: 'Post in a few <span class="ital">taps</span>', text: `Tap <b>Post update</b> on any screen, take a few photos, and add a sentence. It goes into Friday’s email automatically, or you can email clients right away.` },
     { art: 'decide', eyebrow: 'Decisions', title: 'Ask, and they <span class="ital">answer</span>', text: `Questions, selections, and change orders live under Decisions. Clients are emailed when you send one and reminded before it’s due. You’re emailed when they respond.` },
-    { art: 'homes', eyebrow: 'All homes', title: 'Every build in <span class="ital">one place</span>', text: `All homes shows each build’s progress and what’s waiting. Invite clients and teammates from Your team.`, done: 'Get started' },
+    { art: 'homes', eyebrow: 'Today', title: 'Every build in <span class="ital">one place</span>', text: `Today lists only what needs you across every home, urgent first, and lets you reply, confirm, or mark things reviewed right there. Decide who handles what on each home from Your team.`, done: 'Get started' },
   ];
   const home = S.d ? esc(P().name) : 'your home', lead = S.d ? pm() : null;
   return [
@@ -1346,6 +1436,25 @@ async function act(a, el) {
         <img src="${esc(S.urls[w.path])}" alt="${esc(w.room)}" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">
         <div class="row" style="justify-content:space-between"><div class="row" style="gap:6px">${w.systems.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><span class="small muted">${list.length > 1 ? `${i + 1} of ${list.length} · ` : ''}Photographed ${fd(w.taken_on, { month: 'long', day: 'numeric', year: 'numeric' })}${isStaff() ? ` · <button class="edit-link" data-act="wall-del" data-id="${w.id}">Delete</button>` : ''}</span></div>`, true); break; }
     case 'term': showTerm(el); break;
+    case 'td-scope': S.ui.tdAll = el.dataset.v === 'all'; store.set('portal.td.all', S.ui.tdAll ? '1' : '0'); render(true); break;
+    case 'td-open': S.pid = id; store.set('portal.pid', id); S.ui.thread = null; await loadProject(id); location.hash = '#' + (el.dataset.v || 'overview'); S.view = resolveView(el.dataset.v || 'overview'); render(); window.scrollTo(0, 0); break;
+    case 'td-post': S.pid = id; store.set('portal.pid', id); await loadProject(id); location.hash = '#overview'; S.view = 'overview'; render(); S.draft = []; S.postText = ''; modal(postSheet()); break;
+    case 'td-reply': S.ui.tdReply = id || null; render(true); $('#td-r')?.focus(); break;
+    case 'td-send': {
+      const body = $('#td-r').value.trim(); if (!body) { $('#td-r').focus(); break; }
+      must(await sb.from('messages').insert({ thread_id: id, project_id: el.dataset.v, body }));
+      S.ui.tdReply = null; await loadToday(); render(true); toast('Sent'); break; }
+    case 'td-sel': {
+      const sel = must(await sb.from('selections').select('project_id').eq('id', id).single());
+      must(await sb.from('selections').update({ status: 'approved' }).eq('id', id));
+      await sb.from('activity').insert({ project_id: sel.project_id, body: 'confirmed and ordered a selection', view: 'selections' });
+      await loadToday(); render(true); toast('Confirmed'); break; }
+    case 'td-ev': {
+      const e = must(await sb.from('events').select('project_id,title,starts_on').eq('id', id).single()), t = e.title.replace(' (requested)', '');
+      must(await sb.from('events').update({ status: 'scheduled', title: t }).eq('id', id));
+      await sb.from('activity').insert({ project_id: e.project_id, body: `confirmed: ${t} on ${fd(e.starts_on)}`, view: 'calendar' });
+      await loadToday(); render(true); toast('Confirmed'); break; }
+    case 'td-note': must(await sb.from('notes').update({ reviewed: true, reviewed_by: S.me.id }).eq('id', id)); await loadToday(); render(true); toast('Marked reviewed'); break;
     case 'warr-new': { const it = el.dataset.item && S.d.home_items.find(x => x.id === el.dataset.item); S.draft = []; S.warrDraft = { urgency: 'routine', home_item_id: it?.id || null, room: it && it.room !== WHOLE ? it.room : '' }; modal(warrForm(), true); break; }
     case 'wr-urg': keepWarr(); S.warrDraft.urgency = el.dataset.v; modal(warrForm(), true); break;
     case 'warr-send': {
@@ -1461,7 +1570,7 @@ async function act(a, el) {
       $('#modal .email-frame').srcdoc = data.html; break; }
     case 'more': { const pop = $('#more-pop'); pop.hidden = !pop.hidden; break; }
     case 'more-sheet': {
-      const items = [['timeline','Timeline'], ...MORE, ...(isStaff() ? [['homes','All homes']] : [])];
+      const items = [['timeline','Timeline'], ...MORE, ...(isStaff() ? [['homes','Today']] : [])];
       modal(`<span class="eyebrow">${esc(P().name)}</span><nav class="sheet-list">${items.map(([v, l]) => { const b = badgeFor(v); return `<a href="#${v}" ${isCur(v) ? 'aria-current="page"' : ''}><span>${l}</span>${b ? `<sup>${b}</sup>` : '<span class="go">→</span>'}</a>`; }).join('')}</nav>`);
       $('#modal .dialog').classList.add('sheet'); break; }
     case 'signout': await sb.auth.signOut(); location.hash = ''; location.reload(); break;
@@ -1484,11 +1593,12 @@ async function act(a, el) {
         <div class="field"><label for="me-phone">Phone</label><input id="me-phone" type="tel" value="${esc(S.me.phone || '')}"></div>
         ${isStaff() ? `<div class="field"><label for="me-title">Title</label><input id="me-title" value="${esc(S.me.title || '')}"></div>` : ''}
         <div class="field"><span>Email</span>
-          <label class="switch"><input type="checkbox" id="me-upd" ${S.me.email_updates !== false ? 'checked' : ''}><span>${isStaff() ? 'Email me when clients answer, sign, choose, request a visit, or send a message' : 'Email me when something needs my attention, and when the team sends a message'}</span></label>
+          <label class="switch"><input type="checkbox" id="me-upd" ${S.me.email_updates !== false ? 'checked' : ''}><span>${isStaff() ? 'Email me when clients answer, sign, choose, request a visit, send a message, or need warranty service' : 'Email me when something needs my attention, and when the team sends a message'}</span></label>
+          ${isStaff() ? `<label class="switch"><input type="checkbox" id="me-daily" ${S.me.email_mode === 'daily' ? 'checked' : ''}><span>Bundle them into one email each weekday morning<br><span class="small muted">Urgent warranty requests still arrive right away.</span></span></label>` : ''}
           ${isStaff() ? '' : `<label class="switch"><input type="checkbox" id="me-dig" ${S.me.email_digest !== false ? 'checked' : ''}><span>Send me “Your home this week” every Friday</span></label>`}</div>
         <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="me-save">Save</button></div>`); break;
     case 'me-save': {
-      const upd = { full_name: val('me-name') || null, phone: val('me-phone') || null, email_updates: $('#me-upd').checked }; if (isStaff()) upd.title = val('me-title') || null; else upd.email_digest = $('#me-dig').checked;
+      const upd = { full_name: val('me-name') || null, phone: val('me-phone') || null, email_updates: $('#me-upd').checked }; if (isStaff()) { upd.title = val('me-title') || null; upd.email_mode = $('#me-daily').checked ? 'daily' : 'instant'; } else upd.email_digest = $('#me-dig').checked;
       must(await sb.from('profiles').update(upd).eq('id', S.me.id)); Object.assign(S.me, upd); closeModal();
       if (S.pid && S.view !== 'homes') await refresh(['project_members']); else render(); toast('Saved'); break; }
     case 'bell': {
@@ -1834,6 +1944,11 @@ document.addEventListener('change', async e => {
       }
       await log(`added ${files.length} document${files.length > 1 ? 's' : ''} to ${folder}`, 'documents');
       S.ui.docFolder = 'All'; await refresh(['documents','activity']); toast('Uploaded');
+    }
+    if (t.dataset.change === 'duty') {
+      const d = { ...(P().duties || {}) }; if (t.value) d[t.dataset.v] = t.value; else delete d[t.dataset.v];
+      must(await sb.from('projects').update({ duties: d }).eq('id', S.pid)); await refresh(['project']);
+      const who = t.value ? S.profiles[t.value] : pm(); toast(`${(DUTIES().find(x => x[0] === t.dataset.v) || [, ''])[1]} now goes to ${(who?.full_name || 'the project manager').split(' ')[0]}`);
     }
     if (t.dataset.change === 'draw-status') {
       const upd = { status: t.value }; if (t.value === 'paid') upd.paid_date = isoToday();

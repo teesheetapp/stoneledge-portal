@@ -113,6 +113,14 @@ window.PORTAL = {
         "Foyer", "Stair hall", "Bonus room", "Garage", "Attic", "Mechanical room"],
       wallSystems: ["Plumbing", "Electrical", "HVAC", "Low-voltage", "Blocking"],
 
+      // Areas a home's work can be split into. Anything not assigned on a home goes to its project manager.
+      duties: [["selections", "Selections & Design Center"], ["manual", "Home manual"], ["walls", "Wall photos"], ["visits", "Visit requests"],
+        ["notes", "Client notes"], ["warranty", "Warranty"], ["finance", "Draws & invoices"]],
+
+      // Note from the PM at the top of the overview. It's optional.
+      // nudgeDays: remind the PM when the note is this old (0 = never). hideAfterDays: clients stop seeing an old note (0 = never).
+      pmNote: { nudgeDays: 0, hideAfterDays: 45 },
+
       // Home manual: categories in the order shown, the essentials every home should list,
       // and the care note pre-filled for each category (the team can edit it per item).
       manualCategories: ["Paint", "Flooring", "Tile & stone", "Countertops", "Cabinetry", "Plumbing fixtures", "Lighting",
