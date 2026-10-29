@@ -423,7 +423,7 @@ function vOverview() {
     <div class="rail" style="grid-template-columns:repeat(${S.d.phases.length || 1},minmax(0,1fr))" aria-label="Build progress by phase">${S.d.phases.map(ph => `<div class="${ph.status === 'current' ? 'cur' : ph.status}" title="${esc(ph.name)}"><i></i></div>`).join('')}</div>
     <div class="rail-foot"><span>${cp ? `<span class="ital now">${rom(S.d.phases.indexOf(cp))}</span> ${esc(short(cp.name))}${cp.end_date ? ` <span class="muted-h">· through ${fd(cp.end_date)}</span>` : ''}` : 'Schedule to be set'}</span><a href="#timeline" class="rail-link"><b class="num">${progressOf(S.d.phases)}%</b> complete →</a></div>
   </section>
-  ${pmNote()}
+  ${pmNote()}${momentBanner()}
   <div class="grid2">
     <section>
       <div class="sec-h"><h2>${isStaff() ? 'Needs attention' : 'Awaiting your attention'}</h2><span class="aside">${items.length} item${items.length === 1 ? '' : 's'}</span></div>
@@ -480,6 +480,7 @@ function vTimeline() {
       ${open ? `<div class="phase-detail">
         <div class="explain"><div><span class="eyebrow">What happens</span>${gloss(ph.what || '—')}</div><div><span class="eyebrow">When you visit</span>${gloss(ph.look || '—')}</div><div><span class="eyebrow">Your decisions</span>${gloss(ph.decisions || '—')}</div></div>
         ${pics.length ? `<div class="photos">${pics.map(photoBtn).join('')}</div>` : ''}
+        ${ph.status === 'done' ? `<div class="row" style="margin-bottom:10px"><button class="btn sm" data-act="moment" data-id="${ph.id}">Share this moment</button></div>` : ''}
         ${isStaff() ? `<div class="row">${ph.status === 'current' ? `<button class="btn primary sm" data-act="ph-complete" data-id="${ph.id}">Mark complete & start next</button>` : ph.status === 'upcoming' ? `<button class="btn sm" data-act="ph-start" data-id="${ph.id}">Start this phase</button>` : ''}<button class="btn sm ghost" data-act="ph-edit" data-id="${ph.id}">Edit phase</button></div>` : ''}
       </div>` : ''}
     </div></div>`; }).join('')}</div>`;
@@ -1066,6 +1067,92 @@ function importSheet() {
     <datalist id="mf-rooms">${[...new Set([WHOLE, ...(S.d.home_items || []).map(i => i.room), ...(B.wallRooms || [])])].map(r => `<option value="${esc(r)}">`).join('')}</datalist>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="man-import-save">Add to manual</button></div>`;
 }
+/* ================= milestone moments ================= */
+const momentLine = ph => (B.phases.find(x => x.name === ph.name) || {}).moment || `${short(ph.name)} is complete`;
+const recentMoment = () => S.d.phases.filter(p => p.status === 'done' && p.completed_at && (Date.now() - new Date(p.completed_at)) < 21 * 864e5)
+  .sort((a, b) => new Date(b.completed_at) - new Date(a.completed_at))[0];
+// Photos to choose from: this phase's site photos first, then the rest, newest first
+function momentPhotos(ph) {
+  const mine = S.d.updates.filter(u => u.phase_id === ph.id).flatMap(u => photosOf(u.id)).map(p => p.path);
+  const rest = S.d.updates.filter(u => u.phase_id !== ph.id).flatMap(u => photosOf(u.id)).map(p => p.path);
+  return [...new Set([...mine, ...(S.d.project.cover_path ? [S.d.project.cover_path] : []), ...rest])].filter(p => S.urls[p]).slice(0, 10);
+}
+function loadImg(src) { return new Promise((ok, no) => { const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => ok(i); i.onerror = no; i.src = src; }); }
+async function drawMoment(ph, photoPath, showName, useLogo = true) {
+  const W = 1080, H = 1350, PANEL = 900, PAD = 80, c = B.colors.light;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H; const g = cv.getContext('2d');
+  await Promise.all([document.fonts.load(`500 96px ${B.fonts.display}`), document.fonts.load(`500 26px ${B.fonts.body}`), document.fonts.load(`400 28px ${B.fonts.body}`)]).catch(() => {});
+  g.fillStyle = c.hero; g.fillRect(0, 0, W, H);
+  const i = S.d.phases.findIndex(p => p.id === ph.id), n = S.d.phases.length;
+  let img = null; if (photoPath) img = await loadImg(S.urls[photoPath]).catch(() => null);
+  if (img) {
+    const s = Math.max(W / img.width, PANEL / img.height), w = img.width * s, h = img.height * s;
+    g.drawImage(img, (W - w) / 2, (PANEL - h) / 2, w, h);
+    const gr = g.createLinearGradient(0, PANEL - 260, 0, PANEL); gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(1, c.hero); g.fillStyle = gr; g.fillRect(0, PANEL - 260, W, 260);
+  } else {
+    g.fillStyle = c.hero2; g.fillRect(0, 0, W, PANEL);
+    g.fillStyle = c.accentBright; g.globalAlpha = .14; g.font = `italic 500 620px ${B.fonts.display}`; g.textAlign = 'center'; g.fillText(rom(i), W / 2, 700); g.globalAlpha = 1; g.textAlign = 'left';
+  }
+  // eyebrow
+  const ls = (t, x, y, sp) => { for (const ch of t) { g.fillText(ch, x, y); x += g.measureText(ch).width + sp; } return x; };
+  g.fillStyle = c.accentBright; g.font = `500 24px ${B.fonts.body}`;
+  ls((showName ? P().name : 'Our new home').toUpperCase(), PAD, 975, 5);
+  // headline: shrink to fit, then wrap
+  const line = momentLine(ph) + (/[.!?]$/.test(momentLine(ph)) ? '' : '.');
+  let size = 104; g.fillStyle = c.heroInk;
+  do { g.font = `500 ${size}px ${B.fonts.display}`; size -= 6; } while (g.measureText(line).width > W - PAD * 2 && size > 72);
+  if (g.measureText(line).width > W - PAD * 2) { const words = line.split(' '), half = Math.ceil(words.length / 2); g.fillText(words.slice(0, half).join(' '), PAD, 1060); g.fillText(words.slice(half).join(' '), PAD, 1060 + size); }
+  else g.fillText(line, PAD, 1075);
+  // date + phase
+  g.fillStyle = c.heroMuted; g.font = `400 28px ${B.fonts.body}`;
+  g.fillText(`${short(ph.name)} · ${fdL(ph.completed_at || new Date().toISOString())}`, PAD, 1160);
+  // progress
+  g.fillStyle = 'rgba(255,255,255,.16)'; g.fillRect(PAD, 1200, W - PAD * 2, 3);
+  g.fillStyle = c.accentBright; g.fillRect(PAD, 1200, (W - PAD * 2) * (i + 1) / n, 3);
+  g.fillStyle = c.heroMuted; g.font = `500 21px ${B.fonts.body}`; ls(`PHASE ${rom(i)} OF ${rom(n - 1)}`, PAD, 1270, 4);
+  // builder mark
+  let logo = null; if (useLogo && B.logo) logo = await loadImg(B.logo.onDark).catch(() => null);
+  if (logo) { const h = 66, w = logo.width * h / logo.height; g.drawImage(logo, W - PAD - w, 1226, w, h); }
+  else { g.fillStyle = c.heroInk; g.font = `500 34px ${B.fonts.display}`; g.textAlign = 'right'; g.fillText(B.fullName, W - PAD, 1272); g.textAlign = 'left'; }
+  try { return await new Promise((ok, no) => cv.toBlob(b => b ? ok(b) : no(new Error('blank')), 'image/jpeg', .9)); }
+  catch (e) { if (useLogo) return drawMoment(ph, photoPath, showName, false); if (photoPath) return drawMoment(ph, null, showName, false); throw e; }
+}
+function momentCaption(ph) {
+  const l = momentLine(ph).replace(/[.!?]$/, '');
+  return /welcome home/i.test(l) ? `Welcome home! Our new home by ${B.fullName} is complete.` : `${l}! Our home with ${B.fullName} is coming together.`;
+}
+async function openMoment(id) {
+  const ph = S.d.phases.find(p => p.id === id), photos = momentPhotos(ph);
+  S.moment = { id, photo: S.moment?.id === id ? S.moment.photo : (photos[0] || null), showName: S.moment?.id === id ? S.moment.showName : true, caption: S.moment?.id === id ? S.moment.caption : momentCaption(ph) };
+  modal(`<div class="moment-sheet">
+    <div class="moment-preview"><div class="moment-img" id="mo-img"><span class="small muted">Preparing…</span></div></div>
+    <div class="moment-side">
+      <span class="eyebrow">Share the moment</span><h2>${esc(momentLine(ph))}</h2>
+      <p class="small muted">A card for family and friends, or for your own record. ${isStaff() ? `${esc(clientFirst())} sees the same card in their portal.` : ''}</p>
+      ${photos.length > 1 ? `<div class="field"><span>Photo</span><div class="mo-photos">${photos.map(p => `<button class="mo-ph" data-act="moment-photo" data-v="${esc(p)}" aria-pressed="${p === S.moment.photo}"><img src="${esc(S.urls[p])}" alt=""></button>`).join('')}<button class="mo-ph mo-none" data-act="moment-photo" data-v="" aria-pressed="${!S.moment.photo}">No photo</button></div></div>` : ''}
+      <label class="switch"><input type="checkbox" id="mo-name" ${S.moment.showName ? 'checked' : ''}> <span>Show “${esc(P().name)}”<br><span class="small muted">Turn off to keep the card anonymous.</span></span></label>
+      <div class="field"><label for="mo-cap">Caption</label><textarea id="mo-cap" rows="3">${esc(S.moment.caption)}</textarea></div>
+      <div class="row mo-actions"><button class="btn primary" data-act="moment-share" id="mo-share" disabled>${navigator.canShare ? 'Share' : 'Download'}</button><button class="btn" data-act="moment-copy">Copy caption</button><button class="btn ghost" data-act="modal-close">Close</button></div>
+    </div></div>`, true);
+  await paintMoment();
+}
+async function paintMoment() {
+  const ph = S.d.phases.find(p => p.id === S.moment.id), mine = S.moment;
+  const blob = await drawMoment(ph, mine.photo, mine.showName);
+  if (S.moment !== mine || !$('#mo-img')) return;
+  if (mine.url) URL.revokeObjectURL(mine.url);
+  mine.url = URL.createObjectURL(blob);
+  mine.file = new File([blob], `${(B.slug || 'home')}-${short(ph.name).toLowerCase().replace(/[^a-z0-9]+/g, '-')}.jpg`, { type: 'image/jpeg' });
+  $('#mo-img').innerHTML = `<img src="${mine.url}" alt="${esc(momentLine(ph))}">`;
+  const b = $('#mo-share'); if (b) { b.disabled = false; b.textContent = navigator.canShare?.({ files: [mine.file] }) ? 'Share' : 'Download'; }
+}
+function momentBanner() {
+  const ph = recentMoment(); if (!ph) return '';
+  const thumb = momentPhotos(ph)[0];
+  return `<section class="moment-banner">${thumb ? `<img src="${esc(S.urls[thumb])}" alt="">` : ''}<div class="mb-text"><span class="eyebrow">Milestone · ${fd(ph.completed_at)}</span><h3>${esc(momentLine(ph))}${/[.!?]$/.test(momentLine(ph)) ? '' : '.'}</h3>
+    <p class="small">${isStaff() ? `${esc(clientFirst())} can share a card of this moment with family and friends.` : `${esc(short(ph.name))} is complete. Share the moment with family and friends.`}</p></div>
+    <button class="btn" data-act="moment" data-id="${ph.id}">${isStaff() ? 'See their card' : 'Share the moment'}</button></section>`;
+}
 
 const VIEWS = { manual: vManual, glossary: vGlossary, walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
@@ -1186,6 +1273,14 @@ async function act(a, el) {
         <img src="${esc(S.urls[w.path])}" alt="${esc(w.room)}" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">
         <div class="row" style="justify-content:space-between"><div class="row" style="gap:6px">${w.systems.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><span class="small muted">${list.length > 1 ? `${i + 1} of ${list.length} · ` : ''}Photographed ${fd(w.taken_on, { month: 'long', day: 'numeric', year: 'numeric' })}${isStaff() ? ` · <button class="edit-link" data-act="wall-del" data-id="${w.id}">Delete</button>` : ''}</span></div>`, true); break; }
     case 'term': showTerm(el); break;
+    case 'moment': S.moment = null; await openMoment(id); break;
+    case 'moment-photo': S.moment.photo = el.dataset.v || null; document.querySelectorAll('.mo-ph').forEach(b => b.setAttribute('aria-pressed', b === el)); await paintMoment(); break;
+    case 'moment-copy': await navigator.clipboard.writeText(val('mo-cap')).then(() => toast('Caption copied'), () => toast('Select the caption and copy it')); break;
+    case 'moment-share': {
+      const m = S.moment; if (!m?.file) break; const text = val('mo-cap');
+      if (navigator.canShare?.({ files: [m.file] })) { try { await navigator.share({ files: [m.file], text }); } catch (e) { if (e.name !== 'AbortError') throw e; } }
+      else { const a = document.createElement('a'); a.href = m.url; a.download = m.file.name; document.body.appendChild(a); a.click(); a.remove(); toast('Saved to your downloads'); }
+      break; }
     case 'man-room': S.ui.manRoom = el.dataset.v || null; S.ui.manQ = ''; render(); window.scrollTo(0, 0); break;
     case 'man-walls': S.ui.wallRoom = el.dataset.v; location.hash = 'walls'; break;
     case 'man-print': S.ui.manPrint = true; render(); await new Promise(r => setTimeout(r, 350)); window.print(); S.ui.manPrint = false; render(); break;
@@ -1320,7 +1415,7 @@ async function act(a, el) {
       const i = S.d.phases.findIndex(p => p.id === id), next = S.d.phases[i + 1];
       must(await sb.from('phases').update({ status: 'done' }).eq('id', id));
       if (next) { must(await sb.from('phases').update({ status: 'current' }).eq('id', next.id)); S.ui.openPhase = next.id; }
-      await log(`completed ${short(S.d.phases[i].name)}`, 'timeline'); await refresh(['phases','activity']); toast('Phase complete'); break; }
+      await log(`completed ${short(S.d.phases[i].name)}`, 'timeline'); await refresh(['phases','activity']); toast(`Phase complete. ${clientFirst()} can now share the moment.`); break; }
     case 'ph-start': {
       const i = S.d.phases.findIndex(p => p.id === id);
       for (const [j, p] of S.d.phases.entries()) { const st = j < i ? 'done' : j === i ? 'current' : 'upcoming'; if (p.status !== st) must(await sb.from('phases').update({ status: st }).eq('id', p.id)); }
@@ -1579,6 +1674,7 @@ window.addEventListener('scroll', () => hideTerm(), { passive: true });
 window.addEventListener('resize', () => hideTerm());
 document.addEventListener('input', e => {
   if (e.target.id === 'man-q') { S.ui.manQ = e.target.value; const pos = e.target.selectionStart; render(true); const i = $('#man-q'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
+  if (e.target.id === 'mo-cap' && S.moment) S.moment.caption = e.target.value;
   if (e.target.id === 'gloss-q') { S.ui.glossQ = e.target.value; $('#gloss-list').innerHTML = glossList(); }
   if (e.target.id === 'doc-q') { S.ui.docQ = e.target.value; $('#doc-rows').innerHTML = docRows(); }
   if (e.target.id === 'wall-q') { S.ui.wallQ = e.target.value; const pos = e.target.selectionStart; render(true); const i = $('#wall-q'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
@@ -1590,6 +1686,7 @@ document.addEventListener('change', async e => {
       const blob = await compress(t.files[0], 1600); S.manPhoto = { blob, preview: URL.createObjectURL(blob) };
       const pv = $('#mf-prev'); if (pv) pv.outerHTML = `<img id="mf-prev" src="${S.manPhoto.preview}" alt="">`; const lb = t.closest('label'); if (lb) lb.firstChild.textContent = 'Replace photo';
     }
+    if (t.id === 'mo-name') { S.moment.showName = t.checked; await paintMoment(); }
     if (t.id === 'mf-cat') {
       const care = $('#mf-care'), old = manCare(S.manDraft.category);
       if (care && (!care.value.trim() || care.value.trim() === old)) care.value = manCare(t.value);
