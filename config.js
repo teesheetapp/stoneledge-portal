@@ -23,11 +23,11 @@ window.PORTAL = {
       fullName: "Stoneledge Luxury Homes",
       wordmarkSub: "Luxury Homes · Client portal",
       tagline: "Constructing dreams",
-      logo: null, // e.g. "logos/stoneledge.svg" — replaces the text wordmark when set
+      logo: { onLight: "logos/stoneledge-dark.png", onDark: "logos/stoneledge-light.png" }, // dark lettering for light backgrounds, light for dark
 
       fonts: {
-        href: "https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,500;1,6..96,400&family=Jost:wght@300;400;500;600&display=swap",
-        display: '"Bodoni Moda","Didot","Bodoni 72",Georgia,serif',
+        href: "https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Jost:wght@300;400;500;600&display=swap",
+        display: '"Cormorant Garamond","Cormorant","Garamond","Times New Roman",serif',
         body: '"Jost","Futura","Avenir Next",system-ui,sans-serif',
       },
 

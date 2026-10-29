@@ -35,8 +35,9 @@ function applyBrand() {
   document.title = `${B.fullName} · ${L.client} portal`;
   document.querySelector('meta[name="theme-color"]')?.setAttribute('content', c.light.hero);
 }
+const logoImg = (cls = '') => `<span class="logo ${cls}"><img class="lg-d" src="${esc(B.logo.onLight)}" alt="${esc(B.fullName)}"><img class="lg-l" src="${esc(B.logo.onDark)}" alt="" aria-hidden="true"></span>`;
 const wordmark = () => B.logo
-  ? `<a class="wordmark" href="#overview"><img src="${esc(B.logo)}" alt="${esc(B.fullName)}"></a>`
+  ? `<a class="wordmark" href="#overview">${logoImg()}</a>`
   : `<a class="wordmark" href="#overview"><b>${esc(B.name)}</b><span>${esc(B.wordmarkSub)}</span></a>`;
 
 /* ================= helpers ================= */
@@ -735,7 +736,7 @@ function vDiary() {
   </div>
   <div class="diary">
     <section class="diary-cover">
-      <span class="eyebrow">${esc(B.fullName)}</span>
+      ${B.logo ? `<img class="diary-logo" src="${esc(B.logo.onDark)}" alt="${esc(B.fullName)}">` : `<span class="eyebrow">${esc(B.fullName)}</span>`}
       <h1>${esc(nameParts.join(' '))} <em>${esc(last)}</em></h1>
       <p class="sub">${[p.lot, p.address].filter(Boolean).map(esc).join(' · ')}</p>
       ${p.cover_path && S.urls[p.cover_path] ? `<img class="cover-img" src="${esc(S.urls[p.cover_path])}" alt="">` : ELEV}

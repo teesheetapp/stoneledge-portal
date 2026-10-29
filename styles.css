@@ -487,3 +487,22 @@ html,body{min-height:100%}
   .diary-end{break-before:page;border-top:0;padding-top:90mm}
   .entry-text{font-size:15pt}
 }
+
+/* ===== real logo + Cormorant headings ===== */
+.logo{display:block;line-height:0}
+.logo img{height:46px;width:auto;max-width:100%}
+.logo .lg-l{display:none}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .logo .lg-d{display:none}:root:not([data-theme="light"]) .logo .lg-l{display:block}}
+:root[data-theme="dark"] .logo .lg-d{display:none}
+:root[data-theme="dark"] .logo .lg-l{display:block}
+.auth-card .wordmark{margin:0 auto}
+.auth-card .logo img{height:92px}
+.diary-logo{display:block;height:58px;width:auto;max-width:100%}
+h1,h2,h3,.qtext,.entry-text,.todo .t,.post p.text,.event b,.threads b,.opt b,.dtabs a,.sheet-list a{font-weight:500;letter-spacing:0}
+h1{font-size:clamp(38px,5.4vw,62px)}
+.hero h1{font-size:clamp(44px,6.6vw,80px)}
+.count .n,.big-figure,.stat .v,.event .date .d,.ch-num{font-weight:500}
+@media (max-width:720px){ .logo img{height:36px} }
+@media print{ .diary-logo{height:64px} }
+.wordmark img{max-height:none}
+.wordmark span.logo{display:block}
