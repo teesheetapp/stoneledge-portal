@@ -1,6 +1,6 @@
 -- Scheduler for email notifications (see functions/notify).
 create extension if not exists pg_cron;
-create extension if not exists pg_net;
+create extension if not exists pg_net schema extensions;
 
 create or replace function public.run_notify(mode text) returns bigint
 language sql security definer set search_path = '' as $$
