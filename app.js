@@ -976,8 +976,8 @@ const byCat = (a, b) => catRank(a.category) - catRank(b.category) || a.position 
 // Guess a manual category from a selection's name ("Kitchen faucet" → Plumbing fixtures)
 function guessCat(t) {
   t = (t || '').toLowerCase();
-  const rules = [['Paint', /paint|stain|color/], ['Countertops', /counter|quartz|marble|granite|quartzite|slab/], ['Tile & stone', /tile|stone|backsplash|mosaic/],
-    ['Flooring', /floor|hardwood|carpet|plank/], ['Cabinetry', /cabinet|vanity|millwork|built-in/], ['Plumbing fixtures', /faucet|plumb|sink|shower|tub|toilet|fixture/],
+  const rules = [['Paint', /paint|stain|colou?r|eggshell|matte|satin|gloss|emulsion|benjamin moore|sherwin|farrow/], ['Countertops', /counter|quartz|marble|granite|quartzite|slab/], ['Tile & stone', /tile|stone|backsplash|mosaic/],
+    ['Flooring', /floor|hardwood|carpet|plank/], ['Cabinetry', /cabinet|vanity|millwork|built-in/], ['Plumbing fixtures', /faucet|plumb|sink|shower|tub|toilet|hose|bib|spigot|fixture/],
     ['Lighting', /light|pendant|chandelier|sconce|fixture/], ['Appliances', /appliance|range|oven|refrigerator|fridge|dishwasher|hood|cooktop|wine/],
     ['Hardware', /hardware|pull|knob|hinge|lever/], ['Windows & doors', /window|door/], ['Exterior', /roof|siding|brick|exterior|gutter/]];
   const hit = rules.find(([, re]) => re.test(t)); return hit && manCats().includes(hit[0]) ? hit[0] : 'Other';
@@ -1017,11 +1017,11 @@ function vManual() {
   const pend = isStaff() ? pendingSelections().length : 0;
   const head = pageHead('Home manual', 'Everything in your home, <span class="ital">room by room</span>',
     `Paint colors, finishes, fixtures, appliances, and where the important things are. It grows as your home is finished and is complete at ${esc(L.closing.toLowerCase().startsWith('the') ? L.closing : 'the ' + L.closing)}.`,
-    isStaff() ? `<div class="row" style="justify-content:flex-end">${pend ? `<button class="btn" data-act="man-import">From selections <sup class="count">${pend}</sup></button>` : ''}<button class="btn primary" data-act="man-new">Add to manual</button></div>`
+    isStaff() ? `<div class="row" style="justify-content:flex-end">${pend ? `<button class="btn" data-act="man-import">From selections <sup class="count">${pend}</sup></button>` : ''}<button class="btn" data-act="man-sheet">Import spreadsheet</button><button class="btn primary" data-act="man-new">Add to manual</button></div>`
       : all.length ? `<button class="btn" data-act="man-print">Print or save as PDF</button>` : '');
   if (S.ui.manPrint) return manPrint();
   if (!all.length) return head + `<div class="empty walls-empty">${isStaff()
-    ? `Record what goes into ${esc(clientFirst())}’s home as it’s installed: paint colors, tile, fixtures, appliances, and where the shut-offs and panel are. Chosen selections can be added in one step.<div class="row" style="justify-content:center;margin-top:16px">${pend ? `<button class="btn" data-act="man-import">Add ${pend} chosen selection${pend > 1 ? 's' : ''}</button>` : ''}<button class="btn primary" data-act="man-new">Add to manual</button></div>`
+    ? `Record what goes into ${esc(clientFirst())}’s home as it’s installed: paint colors, tile, fixtures, appliances, and where the shut-offs and panel are. Chosen selections can be added in one step.<div class="row" style="justify-content:center;margin-top:16px">${pend ? `<button class="btn" data-act="man-import">Add ${pend} chosen selection${pend > 1 ? 's' : ''}</button>` : ''}<button class="btn" data-act="man-sheet">Import a spreadsheet</button><button class="btn primary" data-act="man-new">Add to manual</button></div>`
     : 'As your home is finished, your team records every paint color, finish, fixture, and appliance here, room by room, along with where the shut-offs and panel are. It’s yours for as long as you own the home.'}</div>`;
   const search = `<div class="man-search field"><input class="input" id="man-q" type="search" placeholder="Find a color, fixture, or room" value="${esc(S.ui.manQ || '')}" aria-label="Search your home manual" autocomplete="off"></div>`;
   if (q) {
@@ -1312,6 +1312,66 @@ function vToday() {
   <div class="sec-h" style="margin-top:56px"><h2>Homes</h2><button class="btn sm" data-act="home-new">New home</button></div>` + homesGrid();
 }
 
+/* ================= home manual: import from a spreadsheet ================= */
+const IMP_FIELDS = [
+  ['room', 'Room', /^(room|area|location|space)$/i, true], ['name', 'Item', /^(item|name|what|description|fixture|product type|element)$/i, true],
+  ['category', 'Category', /^(category|type|trade|division)$/i], ['maker', 'Brand', /^(brand|maker|manufacturer|mfr|vendor|supplier)$/i],
+  ['product', 'Color, model, or style', /^(color|colour|model|style|product|sku|selection|model ?#|model number)$/i],
+  ['detail', 'Finish, size, serial, or location', /^(finish|size|detail|details|notes?|serial|sheen|spec)$/i],
+  ['care', 'Care', /^(care|maintenance|care instructions)$/i], ['warranty_until', 'Warranty until', /^(warranty|warranty (until|end|expires?)|expires?)$/i]];
+function parseCSV(t) {
+  const rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < t.length; i++) { const ch = t[i];
+    if (q) { if (ch === '"' && t[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') q = false; else cell += ch; }
+    else if (ch === '"') q = true; else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') { if (ch === '\r' && t[i + 1] === '\n') i++; row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch; }
+  if (cell || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim()));
+}
+async function readSheet(file) {
+  if (/\.csv$/i.test(file.name) || file.type === 'text/csv') return parseCSV(await file.text());
+  if (!window.XLSX) await new Promise((ok, no) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'; s.onload = ok; s.onerror = () => no(new Error('Could not open Excel files right now. Save it as CSV and try again.')); document.head.appendChild(s); });
+  const wb = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  return XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, dateNF: 'yyyy-mm-dd', defval: '' }).filter(r => r.some(c => String(c).trim()));
+}
+function toISODate(v) {
+  if (!v) return null; v = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(v)) return v.slice(0, 10);
+  if (/^\d{5}$/.test(v)) { const d = new Date(Date.UTC(1899, 11, 30) + (+v) * 864e5); return d.toISOString().slice(0, 10); }
+  const m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/); if (m) return `${m[3].length === 2 ? '20' + m[3] : m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  const d = new Date(v); return isNaN(d) ? null : d.toISOString().slice(0, 10);
+}
+function importRows() {
+  const I = S.imp, head = I.rows[0], body = I.rows.slice(1);
+  return body.map(r => { const get = k => I.map[k] === '' || I.map[k] == null ? '' : String(r[+I.map[k]] ?? '').trim();
+    const name = get('name'), room = get('room') || I.room || '';
+    if (!name) return null;
+    const raw = get('category'), named = manCats().find(c => c.toLowerCase() === raw.toLowerCase()), byName = guessCat(`${raw} ${name}`),
+      cat = named || (byName !== 'Other' ? byName : guessCat(`${raw} ${name} ${get('maker')} ${get('product')} ${get('detail')}`));
+    return { room, category: cat, name, maker: get('maker') || null, product: get('product') || null, detail: get('detail') || null, care: get('care') || manCare(cat) || null, warranty_until: toISODate(get('warranty_until')) };
+  }).filter(Boolean);
+}
+function importSheetForm() {
+  const I = S.imp;
+  if (!I) return `<span class="eyebrow">Home manual</span><h2>Import from a spreadsheet</h2>
+    <p class="small muted">Already keep a finish schedule or appliance list? Upload it as Excel or CSV and we’ll match the columns. One row per item: room, item, brand, color or model, and so on.</p>
+    <label class="drop" for="imp-file" style="position:relative">Choose an Excel or CSV file<input type="file" id="imp-file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"></label>
+    <p class="small" style="margin-top:12px"><button class="linkbtn" data-act="imp-template">Download a template</button></p>
+    <p class="inline-err" id="imp-err" hidden></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button></div>`;
+  const head = I.rows[0], rows = importRows(), missingRoom = rows.filter(r => !r.room).length;
+  return `<span class="eyebrow">Home manual · ${esc(I.file)}</span><h2>Match the columns</h2>
+    <p class="small muted">We matched what we could. Check each field, then import.</p>
+    <div class="imp-map">${IMP_FIELDS.map(([k, l, , req]) => `<label class="duty"><span>${l}${req ? '' : ' (optional)'}</span><select class="input" data-change="imp-map" data-v="${k}"><option value="">${k === 'room' ? 'Same room for every row' : 'Not in this file'}</option>${head.map((h, i) => `<option value="${i}"${String(I.map[k]) === String(i) ? ' selected' : ''}>${esc(h || 'Column ' + (i + 1))}</option>`).join('')}</select></label>`).join('')}</div>
+    ${I.map.room === '' || I.map.room == null || missingRoom ? `<div class="field" style="max-width:320px"><label for="imp-room">${I.map.room === '' || I.map.room == null ? 'Room for every row' : 'Room for rows that don’t list one'}</label><input id="imp-room" list="mf-rooms" value="${esc(I.room || '')}" placeholder="Choose or type a room"><datalist id="mf-rooms">${[WHOLE, ...(B.wallRooms || [])].map(r => `<option value="${esc(r)}">`).join('')}</datalist></div>` : ''}
+    <div class="imp-preview"><table class="man-table"><thead><tr><th>Room</th><th>Item</th><th>Maker & product</th><th>Category</th></tr></thead><tbody>${rows.slice(0, 6).map(r => `<tr><td>${esc(r.room || '—')}</td><td><b>${esc(r.name)}</b>${r.detail ? `<div>${esc(r.detail)}</div>` : ''}</td><td>${esc([r.maker, r.product].filter(Boolean).join(' · '))}</td><td>${esc(r.category)}</td></tr>`).join('')}</tbody></table>
+      ${rows.length > 6 ? `<p class="small muted">and ${rows.length - 6} more</p>` : ''}</div>
+    <p class="inline-err" id="imp-err" hidden></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="imp-reset">Choose another file</button><button class="btn primary" data-act="imp-save">Import ${rows.length} item${rows.length === 1 ? '' : 's'}</button></div>`;
+}
+
 const VIEWS = { warranty: vWarranty, manual: vManual, glossary: vGlossary, walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
 /* ================= note from the project manager ================= */
@@ -1436,6 +1496,20 @@ async function act(a, el) {
         <img src="${esc(S.urls[w.path])}" alt="${esc(w.room)}" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">
         <div class="row" style="justify-content:space-between"><div class="row" style="gap:6px">${w.systems.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><span class="small muted">${list.length > 1 ? `${i + 1} of ${list.length} · ` : ''}Photographed ${fd(w.taken_on, { month: 'long', day: 'numeric', year: 'numeric' })}${isStaff() ? ` · <button class="edit-link" data-act="wall-del" data-id="${w.id}">Delete</button>` : ''}</span></div>`, true); break; }
     case 'term': showTerm(el); break;
+    case 'man-sheet': S.imp = null; modal(importSheetForm(), true); break;
+    case 'imp-reset': S.imp = null; modal(importSheetForm(), true); break;
+    case 'imp-template': {
+      const csv = 'Room,Category,Item,Brand,Color or model,Finish / size / location,Warranty until\nKitchen,Paint,Walls,Benjamin Moore,Chantilly Lace OC-65,Eggshell,\nKitchen,Appliances,Range,Wolf,DF48650G/S/P,Serial 18823344,2028-12-01\nWhole home,Systems,Main water shut-off,,,"Mechanical room, left of the water heater",\n';
+      const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = 'home-manual-template.csv'; document.body.appendChild(a); a.click(); a.remove(); break; }
+    case 'imp-save': {
+      if ($('#imp-room')) S.imp.room = val('imp-room');
+      const rows = importRows(), err = $('#imp-err');
+      if (!rows.length) { err.textContent = 'No rows with an item name were found. Check the Item column.'; err.hidden = false; break; }
+      if (rows.some(r => !r.room)) { err.textContent = 'Some rows have no room. Choose a room for them above.'; err.hidden = false; $('#imp-room')?.focus(); break; }
+      el.textContent = 'Importing';
+      const base = (S.d.home_items || []).length;
+      for (let i = 0; i < rows.length; i += 200) must(await sb.from('home_items').insert(rows.slice(i, i + 200).map((r, j) => ({ ...r, project_id: S.pid, position: base + i + j }))));
+      await log(`imported ${rows.length} items into the home manual`, 'manual'); S.imp = null; closeModal(); await refresh(['home_items', 'activity']); toast(`Imported ${rows.length} item${rows.length === 1 ? '' : 's'}`); break; }
     case 'td-scope': S.ui.tdAll = el.dataset.v === 'all'; store.set('portal.td.all', S.ui.tdAll ? '1' : '0'); render(true); break;
     case 'td-open': S.pid = id; store.set('portal.pid', id); S.ui.thread = null; await loadProject(id); location.hash = '#' + (el.dataset.v || 'overview'); S.view = resolveView(el.dataset.v || 'overview'); render(); window.scrollTo(0, 0); break;
     case 'td-post': S.pid = id; store.set('portal.pid', id); await loadProject(id); location.hash = '#overview'; S.view = 'overview'; render(); S.draft = []; S.postText = ''; modal(postSheet()); break;
@@ -1945,6 +2019,16 @@ document.addEventListener('change', async e => {
       await log(`added ${files.length} document${files.length > 1 ? 's' : ''} to ${folder}`, 'documents');
       S.ui.docFolder = 'All'; await refresh(['documents','activity']); toast('Uploaded');
     }
+    if (t.id === 'imp-file' && t.files[0]) {
+      const f = t.files[0]; let rows;
+      try { rows = await readSheet(f); } catch (e) { const er = $('#imp-err'); er.textContent = e.message || 'Could not read that file.'; er.hidden = false; return; }
+      if (!rows || rows.length < 2) { const er = $('#imp-err'); er.textContent = 'That file looks empty. It needs a header row and at least one item.'; er.hidden = false; return; }
+      const head = rows[0].map(h => String(h || '').trim()), map = {};
+      IMP_FIELDS.forEach(([k, , re]) => { const i = head.findIndex((h, n) => re.test(h) && !Object.values(map).includes(n)); map[k] = i >= 0 ? i : ''; });
+      S.imp = { file: f.name, rows: [head, ...rows.slice(1)], map, room: '' }; modal(importSheetForm(), true);
+    }
+    if (t.dataset.change === 'imp-map') { if ($('#imp-room')) S.imp.room = val('imp-room'); S.imp.map[t.dataset.v] = t.value; modal(importSheetForm(), true); }
+    if (t.id === 'imp-room') { S.imp.room = t.value; modal(importSheetForm(), true); }
     if (t.dataset.change === 'duty') {
       const d = { ...(P().duties || {}) }; if (t.value) d[t.dataset.v] = t.value; else delete d[t.dataset.v];
       must(await sb.from('projects').update({ duties: d }).eq('id', S.pid)); await refresh(['project']);
