@@ -199,6 +199,7 @@ const TABLES = {
   questions: q => q.order('created_at', { ascending: false }),
   selections: q => q.order('due_date', { ascending: true, nullsFirst: false }),
   selection_options: q => q.order('position'),
+  selection_favorites: q => q,
   change_orders: q => q.order('number', { ascending: false }),
   draws: q => q.order('position'),
   events: q => q.order('starts_on'),
@@ -530,34 +531,98 @@ function vMessages() {
   </div>`;
 }
 
+const HEART = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg>';
+const favsOf = oid => (S.d.selection_favorites || []).filter(f => f.option_id === oid);
+const isFav = oid => favsOf(oid).some(f => f.user_id === S.me.id);
+const favNames = oid => favsOf(oid).map(f => firstName(f.user_id)).join(' & ');
+// "You & Jake love this", "Your favorite", "Lauren loves this"; builders see "Lauren & Jake favorited this"
+function favLabel(oid) {
+  const fs = favsOf(oid); if (!fs.length) return '';
+  if (isStaff()) return `${favNames(oid)} favorited this`;
+  const mine = fs.some(f => f.user_id === S.me.id), others = fs.filter(f => f.user_id !== S.me.id).map(f => firstName(f.user_id));
+  if (mine && !others.length) return 'Your favorite';
+  if (mine) return `You & ${others.join(' & ')} love this`;
+  return `${others.join(' & ')} ${others.length > 1 ? 'love' : 'loves'} this`;
+}
+const allowDiff = (s, o) => o ? +o.price - +s.allowance : null;
+// What each selection is currently heading toward: the confirmed choice, else a pick in progress, else a favorite.
+function heading(s) {
+  const c = chosen(s);
+  if (c) return { o: c, how: s.status === 'approved' ? 'Approved' : 'Submitted', firm: true };
+  const pickId = S.ui.pick?.[s.id]; const pk = pickId && optionsOf(s.id).find(o => o.id === pickId);
+  if (pk) return { o: pk, how: 'Selected, not submitted' };
+  const fav = optionsOf(s.id).find(o => favsOf(o.id).length);
+  if (fav) return { o: fav, how: 'Favorite' };
+  return null;
+}
+function allowanceSummary() {
+  const rows = S.d.selections.filter(s => +s.allowance > 0);
+  if (!rows.length) return '';
+  let firm = 0, proj = 0, total = 0;
+  const lines = rows.map(s => { const h = heading(s), d = h ? allowDiff(s, h.o) : null; total += +s.allowance;
+    if (d !== null) { proj += d; if (h.firm) firm += d; }
+    return `<tr><td><b>${esc(s.category)}</b></td><td class="n">${money(s.allowance)}</td><td>${h ? `${esc(h.o.name)}<div class="small muted">${h.how}</div>` : '<span class="muted">Not chosen yet</span>'}</td><td class="n ${d > 0 ? 'over' : d < 0 ? 'under' : ''}">${d === null ? '—' : signed(d)}</td></tr>`; }).join('');
+  return `<details class="allow"${S.ui.allowOpen ? ' open' : ''}>
+    <summary data-act="allow-toggle"><span class="eyebrow">Allowance summary</span><span class="allow-sum"><span class="small muted">Projected</span> <b class="num ${proj > 0 ? 'over' : proj < 0 ? 'under' : ''}">${signed(proj)}</b> <span class="small muted">vs. ${money(total)} in allowances</span></span></summary>
+    <div class="tablewrap"><table><thead><tr><th>Selection</th><th class="n">Allowance</th><th>Heading toward</th><th class="n">Difference</th></tr></thead><tbody>${lines}</tbody>
+      <tfoot><tr><td><b>Confirmed so far</b></td><td></td><td></td><td class="n"><b>${signed(firm)}</b></td></tr><tr><td><b>Projected, including picks and favorites</b></td><td class="n">${money(total)}</td><td></td><td class="n"><b>${signed(proj)}</b></td></tr></tfoot></table></div>
+    <p class="small muted" style="margin-top:10px">Differences are settled at ${esc(L.closing.toLowerCase())}. Favorites are only a guide until you submit.</p>
+  </details>`;
+}
+function optCard(s, o) {
+  const diff = +s.allowance ? +o.price - +s.allowance : 0, canPick = s.status === 'open' && !isStaff();
+  const picked = (S.ui.pick?.[s.id] || s.chosen_option_id) === o.id, img = o.image_path && S.urls[o.image_path];
+  const fn = favNames(o.id);
+  return `<div class="opt ${picked ? 'picked' : ''}" ${canPick ? `data-act="sel-pick" data-id="${s.id}" data-o="${o.id}" role="button" tabindex="0" aria-pressed="${picked}"` : ''}>
+    <div class="sw-wrap">${img ? `<span class="sw"><img src="${esc(img)}" alt="${esc(o.name)}"></span><button class="opt-zoom" data-act="opt-zoom" data-o="${o.id}" aria-label="Enlarge photo of ${esc(o.name)}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>` : `<span class="sw">${(o.swatches.length ? o.swatches : ['#ccc']).map(c => `<i style="background:${esc(c)}"></i>`).join('')}</span>`}
+      ${!isStaff() ? `<button class="fav ${isFav(o.id) ? 'on' : ''}" data-act="fav" data-o="${o.id}" aria-pressed="${isFav(o.id)}" aria-label="${isFav(o.id) ? 'Remove from' : 'Add to'} favorites">${HEART}</button>` : ''}
+      ${picked ? `<span class="picked-tag">${s.status === 'open' ? 'Your selection' : s.status === 'approved' ? 'Approved' : 'Submitted'}</span>` : ''}</div>
+    <b>${esc(o.name)}</b><span class="small muted">${esc(o.detail || '')}</span>
+    <span class="price num">${+s.allowance ? `${money(o.price)} · <span class="${diff > 0 ? 'over' : 'under'}">${diff > 0 ? signed(diff) + ' over' : money(-diff) + ' under'}</span>` : (+o.price ? money(o.price) : 'Included')}</span>
+    ${fn ? `<span class="fav-line">${HEART} ${esc(favLabel(o.id))}</span>` : ''}
+    ${isStaff() ? `<span class="row" style="gap:14px"><button class="edit-link" data-act="opt-edit" data-id="${s.id}" data-o="${o.id}">Edit option</button></span>` : ''}
+  </div>`;
+}
+function compareTable(s) {
+  const os = optionsOf(s.id), canPick = s.status === 'open' && !isStaff();
+  const cell = fn => os.map(o => `<td>${fn(o)}</td>`).join('');
+  return `<div class="tablewrap compare"><table>
+    <tr><th></th>${cell(o => o.image_path && S.urls[o.image_path] ? `<img src="${esc(S.urls[o.image_path])}" alt="">` : `<span class="sw">${(o.swatches.length ? o.swatches : ['#ccc']).map(c => `<i style="background:${esc(c)}"></i>`).join('')}</span>`)}</tr>
+    <tr><th>Option</th>${cell(o => `<b class="cmp-name">${esc(o.name)}</b>`)}</tr>
+    <tr><th>Details</th>${cell(o => `<span class="small">${esc(o.detail || '—')}</span>`)}</tr>
+    <tr><th>Price</th>${cell(o => `<span class="num">${+o.price ? money(o.price) : 'Included'}</span>`)}</tr>
+    ${+s.allowance ? `<tr><th>vs. allowance</th>${cell(o => { const d = +o.price - +s.allowance; return `<span class="num ${d > 0 ? 'over' : 'under'}">${d > 0 ? signed(d) + ' over' : money(-d) + ' under'}</span>`; })}</tr>` : ''}
+    <tr><th>Favorites</th>${cell(o => favsOf(o.id).length ? `<span class="fav-line">${HEART} ${esc(favLabel(o.id))}</span>` : (!isStaff() ? `<button class="edit-link" data-act="fav" data-o="${o.id}">Add to favorites</button>` : '<span class="muted">—</span>'))}</tr>
+    ${canPick ? `<tr><th></th>${cell(o => `<button class="btn sm ${(S.ui.pick?.[s.id]) === o.id ? 'primary' : ''}" data-act="sel-pick" data-id="${s.id}" data-o="${o.id}">${(S.ui.pick?.[s.id]) === o.id ? 'Selected' : 'Choose'}</button>`)}</tr>` : ''}
+  </table></div>`;
+}
 function vSelections() {
   const sels = S.d.selections, order = { open: 0, submitted: 1, later: 2, approved: 3 };
   const list = [...sels].sort((a,b) => order[a.status] - order[b.status] || (D(a.due_date) || 0) - (D(b.due_date) || 0));
   const count = st => sels.filter(s => s.status === st).length;
-  return pageHead(esc(L.designCenter), 'Selections', 'Each finish, its date, and how it compares to your allowance. Dates are set so materials arrive before the craftsmen do.', isStaff() ? `<button class="btn primary" data-act="sel-new">Add a selection</button>` : '') + `
+  return pageHead(esc(L.designCenter), 'Selections', 'Each finish, its date, and how it compares to your allowance. Heart the options you love while you decide; dates are set so materials arrive before the craftsmen do.', isStaff() ? `<button class="btn primary" data-act="sel-new">Add a selection</button>` : '') + `
   <div class="summary">
     <div class="stat"><div class="v num">${count('open')}</div><div class="l">To choose</div></div>
     <div class="stat"><div class="v num">${count('submitted')}</div><div class="l">With the ${esc(L.designCenter)}</div></div>
     <div class="stat"><div class="v num">${count('approved')}</div><div class="l">Approved</div></div>
     <div class="stat"><div class="v num" style="font-size:30px">${signed(allowanceVar('approved'))}</div><div class="l">Allowance difference</div></div>
   </div>
+  ${allowanceSummary()}
   ${list.length ? `<div>${list.map(s => {
-    const isOpen = S.ui.openSel === s.id, pick = chosen(s), opts = optionsOf(s.id);
+    const isOpen = S.ui.openSel === s.id, pick = chosen(s), opts = optionsOf(s.id), cmp = S.ui.compare?.[s.id] && opts.length > 1;
+    const favCount = opts.filter(o => favsOf(o.id).length).length;
     const tag = s.status === 'approved' ? '<span class="tag good">Approved</span>' : s.status === 'submitted' ? `<span class="tag brass">With the ${esc(L.designCenter)}</span>` : s.status === 'later' ? `<span class="tag">Opens later${s.due_date ? ' · ' + fd(s.due_date) : ''}</span>` : `<span class="tag ${(daysTo(s.due_date) ?? 99) <= 14 ? 'solid' : ''}">Due ${s.due_date ? fd(s.due_date) : 'soon'}</span>`;
     return `<section class="sel">
       <button class="sel-head" data-act="sel-toggle" data-id="${s.id}" aria-expanded="${isOpen}">
-        <span><h3>${esc(s.category)}</h3><span class="small muted">${esc(s.area || '')}${+s.allowance ? ` · allowance <span class="num">${money(s.allowance)}</span>` : ''}${pick && !isOpen ? ` · <span class="ital">${esc(pick.name)}</span>` : ''}</span></span>${tag}</button>
+        <span><h3>${esc(s.category)}</h3><span class="small muted">${esc(s.area || '')}${+s.allowance ? ` · allowance <span class="num">${money(s.allowance)}</span>` : ''}${pick && !isOpen ? ` · <span class="ital">${esc(pick.name)}</span>` : ''}${!pick && favCount && !isOpen ? ` · ${favCount} favorite${favCount > 1 ? 's' : ''}` : ''}</span></span>${tag}</button>
       ${isOpen ? `${s.note ? `<p class="muted" style="margin-top:14px;font-family:var(--f-display);font-style:italic;font-size:17px">${esc(s.note)}</p>` : ''}
-        ${opts.length ? `<div class="opts">${opts.map(o => {
-          const diff = +s.allowance ? +o.price - +s.allowance : 0, locked = s.status !== 'open' || isStaff();
-          const sw = o.image_path && S.urls[o.image_path] ? `<span class="sw"><img src="${esc(S.urls[o.image_path])}" alt="" style="width:100%;height:100%;object-fit:cover"></span>` : `<span class="sw">${(o.swatches.length ? o.swatches : ['#ccc']).map(c => `<i style="background:${esc(c)}"></i>`).join('')}</span>`;
-          return `<button class="opt" ${locked ? 'disabled style="cursor:default"' : ''} data-act="sel-pick" data-id="${s.id}" data-o="${o.id}" aria-pressed="${(S.ui.pick?.[s.id] || s.chosen_option_id) === o.id}">
-            ${sw}<b>${esc(o.name)}</b><span class="small muted">${esc(o.detail || '')}</span>
-            <span class="price num">${+s.allowance ? `${money(o.price)} · <span class="${diff > 0 ? 'over' : 'under'}">${diff > 0 ? signed(diff) + ' over' : money(-diff) + ' under'}</span>` : (+o.price ? money(o.price) : 'Included')}</span></button>`; }).join('')}</div>`
+        ${opts.length ? `<div class="sel-tools">${opts.length > 1 ? `<div class="seg" role="group" aria-label="View"><button data-act="sel-view" data-id="${s.id}" data-v="grid" aria-pressed="${!cmp}">Gallery</button><button data-act="sel-view" data-id="${s.id}" data-v="compare" aria-pressed="${!!cmp}">Compare</button></div>` : '<span></span>'}
+          ${!isStaff() ? `<button class="edit-link" data-act="sel-ask" data-id="${s.id}">Ask the ${esc(L.designCenter)}</button>` : ''}</div>
+          ${cmp ? compareTable(s) : `<div class="opts">${opts.map(o => optCard(s, o)).join('')}</div>`}`
         : `<p class="muted" style="margin-top:14px">${isStaff() ? 'No options yet. Add the first one below.' : 'Options will be posted here.'}</p>`}
         <div class="row" style="margin-top:18px;justify-content:flex-end">
-          ${!isStaff() && s.status === 'open' ? `<span class="small muted" style="flex:1">${S.ui.pick?.[s.id] ? 'Ready to submit.' : 'Select an option to continue.'}</span><button class="btn primary" data-act="sel-submit" data-id="${s.id}" ${S.ui.pick?.[s.id] ? '' : 'disabled'}>Submit selection</button>` : ''}
-          ${!isStaff() && s.status === 'submitted' ? `<span class="small muted" style="flex:1">Submitted. The ${esc(L.designCenter)} will confirm pricing and lead time.</span>` : ''}
+          ${!isStaff() && s.status === 'open' ? `<span class="small muted" style="flex:1">${S.ui.pick?.[s.id] ? 'Ready to submit. You can change your mind until it’s confirmed.' : 'Tap an option to select it.'}</span><button class="btn primary" data-act="sel-submit" data-id="${s.id}" ${S.ui.pick?.[s.id] ? '' : 'disabled'}>Submit selection</button>` : ''}
+          ${!isStaff() && s.status === 'submitted' ? `<span class="small muted" style="flex:1">Submitted. The ${esc(L.designCenter)} will confirm pricing and lead time.</span><button class="btn sm ghost" data-act="sel-withdraw" data-id="${s.id}">Change my selection</button>` : ''}
           ${isStaff() ? `<span style="flex:1"></span><button class="edit-link" data-act="opt-new" data-id="${s.id}">Add option</button><button class="edit-link" data-act="sel-edit" data-id="${s.id}">Edit</button>
             ${s.status === 'submitted' ? `<button class="btn sm ghost" data-act="sel-reopen" data-id="${s.id}">Reopen</button><button class="btn primary sm" data-act="sel-confirm" data-id="${s.id}">Confirm & order</button>` : ''}
             ${s.status === 'later' ? `<button class="btn primary sm" data-act="sel-open" data-id="${s.id}">Open for choosing</button>` : ''}` : ''}
@@ -1046,20 +1111,52 @@ async function act(a, el) {
       else { const r = must(await sb.from('selections').insert({ ...v, project_id: S.pid, status: val('se-status') || 'open' }).select().single()); S.ui.openSel = r.id; }
       closeModal(); await refresh(['selections']); toast('Saved'); break; }
     case 'sel-del': must(await sb.from('selections').delete().eq('id', id)); closeModal(); await refresh(['selections','selection_options']); break;
-    case 'opt-new':
-      modal(`<span class="eyebrow">Add an option</span><h2>${esc(S.d.selections.find(x => x.id === id).category)}</h2>
-        <div class="form-grid"><div class="field full"><label for="op-name">Name</label><input id="op-name" placeholder="Unlacquered brass"></div>
-        <div class="field full"><label for="op-detail">Detail</label><input id="op-detail" placeholder="Develops a living patina over time"></div>
-        <div class="field"><label for="op-price">Price ($)</label><input type="number" id="op-price"></div><div class="field"><label for="op-sw">Swatch colors (optional)</label><input id="op-sw" placeholder="#B48A4E, #8E6A36"></div>
-        <div class="field full"><span>Photo (optional)</span><label class="drop" for="op-img" style="position:relative" id="op-img-l">Choose a photo<input type="file" id="op-img" accept="image/*"></label></div></div>
-        <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="opt-save" data-id="${id}">Add option</button></div>`, true); break;
+    case 'opt-new': case 'opt-edit': {
+      const o = a === 'opt-edit' ? S.d.selection_options.find(x => x.id === el.dataset.o) : {};
+      modal(`<span class="eyebrow">${o.id ? 'Edit option' : 'Add an option'}</span><h2>${esc(S.d.selections.find(x => x.id === id).category)}</h2>
+        <div class="form-grid"><div class="field full"><label for="op-name">Name</label><input id="op-name" value="${esc(o.name || '')}" placeholder="Unlacquered brass"></div>
+        <div class="field full"><label for="op-detail">Detail</label><input id="op-detail" value="${esc(o.detail || '')}" placeholder="Develops a living patina over time"></div>
+        <div class="field"><label for="op-price">Price ($)</label><input type="number" id="op-price" value="${o.price != null ? +o.price : ''}"></div><div class="field"><label for="op-sw">Swatch colors (optional)</label><input id="op-sw" value="${esc((o.swatches || []).join(', '))}" placeholder="#B48A4E, #8E6A36"></div>
+        <div class="field full"><span>Photo (optional)</span><label class="drop" for="op-img" style="position:relative" id="op-img-l">${o.image_path ? 'Replace the photo' : 'Choose a photo'}<input type="file" id="op-img" accept="image/*"></label></div></div>
+        <div class="row" style="justify-content:flex-end">${o.id ? `<button class="edit-link" data-act="opt-del" data-o="${o.id}" style="margin-right:auto">Remove option</button>` : ''}<button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="opt-save" data-id="${id}" data-o="${o.id || ''}">${o.id ? 'Save' : 'Add option'}</button></div>`, true); break; }
     case 'opt-save': {
       const name = val('op-name'); if (!name) { toast('Name is required'); break; }
-      let image_path = null; const f = $('#op-img').files[0];
-      if (f) { image_path = `${S.pid}/options/${crypto.randomUUID()}.jpg`; await upload(image_path, await compress(f, 1400), 'image/jpeg'); }
-      must(await sb.from('selection_options').insert({ selection_id: id, project_id: S.pid, name, detail: val('op-detail') || null, price: +val('op-price') || 0,
-        swatches: val('op-sw').split(',').map(s => s.trim()).filter(s => /^#[0-9a-f]{3,8}$/i.test(s)), image_path, position: optionsOf(id).length }));
-      closeModal(); await refresh(['selection_options']); toast('Option added'); break; }
+      const row = { name, detail: val('op-detail') || null, price: +val('op-price') || 0, swatches: val('op-sw').split(',').map(s => s.trim()).filter(s => /^#[0-9a-f]{3,8}$/i.test(s)) };
+      const f = $('#op-img').files[0];
+      if (f) { row.image_path = `${S.pid}/options/${crypto.randomUUID()}.jpg`; await upload(row.image_path, await compress(f, 1400), 'image/jpeg'); }
+      if (el.dataset.o) must(await sb.from('selection_options').update(row).eq('id', el.dataset.o));
+      else must(await sb.from('selection_options').insert({ ...row, selection_id: id, project_id: S.pid, position: optionsOf(id).length }));
+      closeModal(); await refresh(['selection_options']); toast(el.dataset.o ? 'Option updated' : 'Option added'); break; }
+    case 'opt-del': {
+      const o = S.d.selection_options.find(x => x.id === el.dataset.o), sel = S.d.selections.find(x => x.id === o.selection_id);
+      if (sel.chosen_option_id === o.id) { toast('This option is the current choice. Reopen the selection first.'); break; }
+      if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to remove'; break; }
+      must(await sb.from('selection_options').delete().eq('id', o.id)); closeModal(); await refresh(['selection_options', 'selection_favorites']); toast('Option removed'); break; }
+    case 'fav': {
+      const oid = el.dataset.o;
+      if (isFav(oid)) must(await sb.from('selection_favorites').delete().eq('option_id', oid).eq('user_id', S.me.id));
+      else must(await sb.from('selection_favorites').insert({ option_id: oid, project_id: S.pid, user_id: S.me.id }));
+      await refresh(['selection_favorites']); break; }
+    case 'opt-zoom': {
+      const o = S.d.selection_options.find(x => x.id === el.dataset.o);
+      modal(`<div class="spread"><div><span class="eyebrow">${esc(S.d.selections.find(x => x.id === o.selection_id)?.category || '')}</span><h3 style="margin-top:6px">${esc(o.name)}</h3></div><button class="btn sm ghost" data-act="modal-close">Close</button></div>
+        <img src="${esc(S.urls[o.image_path])}" alt="${esc(o.name)}" style="width:100%;max-height:72vh;object-fit:contain;background:var(--surface-2)">${o.detail ? `<p class="muted">${esc(o.detail)}</p>` : ''}`, true); break; }
+    case 'sel-view': S.ui.compare = { ...(S.ui.compare || {}), [id]: el.dataset.v === 'compare' }; render(true); break;
+    case 'allow-toggle': S.ui.allowOpen = !S.ui.allowOpen; break;
+    case 'sel-withdraw':
+      must(await sb.rpc('withdraw_selection', { sid: id })); await refresh(['selections', 'activity']); toast('Reopened. Choose again whenever you’re ready.'); break;
+    case 'sel-ask': {
+      const sel = S.d.selections.find(x => x.id === id);
+      modal(`<span class="eyebrow">${esc(L.designCenter)}</span><h2>${esc(sel.category)}</h2>
+        <p class="small muted">Your question goes to the ${esc(L.designCenter)} conversation in Messages, and the team is emailed.</p>
+        <div class="field"><label for="ask-q">Your question</label><textarea id="ask-q" rows="4" placeholder="Could we see the Taj Mahal slab in person before choosing?"></textarea></div>
+        <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="sel-ask-send" data-id="${id}">Send</button></div>`); break; }
+    case 'sel-ask-send': {
+      const q = val('ask-q'); if (!q) { toast('Write your question first'); $('#ask-q').focus(); break; }
+      const sel = S.d.selections.find(x => x.id === id);
+      const th = S.d.threads.find(t => t.name === L.designCenter) || S.d.threads[1] || S.d.threads[0];
+      must(await sb.from('messages').insert({ thread_id: th.id, project_id: S.pid, body: `${sel.category}: ${q}` }));
+      closeModal(); await refresh(['messages']); toast(`Sent to the ${L.designCenter}. You’ll find the reply in Messages.`); break; }
 
     /* change orders */
     case 'co-new': {
@@ -1172,6 +1269,7 @@ document.addEventListener('click', async e => {
 });
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('.opt[data-act]')) { e.preventDefault(); e.target.click(); }
   if (S.tour && $('#modal .tour')) { if (e.key === 'ArrowRight' && $('[data-act="tour-next"]')) act('tour-next', {}); if (e.key === 'ArrowLeft' && $('[data-act="tour-back"]')) act('tour-back', {}); }
   if (e.key === 'Enter' && !e.shiftKey && e.target.id === 'msg-in') { e.preventDefault(); sendMsg().catch(err => toast(err.message)); }
   if (e.key === 'Enter' && !e.shiftKey && e.target.id?.startsWith('c-')) { e.preventDefault(); act('c-send', { dataset: { id: e.target.id.slice(2) } }).catch(err => toast(err.message)); }
