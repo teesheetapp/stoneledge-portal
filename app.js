@@ -258,7 +258,7 @@ function actionItems() {
 
 /* ================= chrome ================= */
 const PRIMARY = [['overview','Overview'],['timeline','Timeline'],['updates','From the site'],['decisions','Decisions'],['messages','Messages']];
-const MORE = [['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['team','Your team']];
+const MORE = [['diary','Photo diary'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['team','Your team']];
 const DEC = [['questions','Questions'],['selections','Selections'],['changes','Change orders']];
 const isDec = v => DEC.some(d => d[0] === v);
 const ICONS = {
@@ -680,6 +680,7 @@ function vWalkthrough() {
       <section class="card" style="background:var(--navy);color:var(--navy-ink);border-color:transparent">
         <span class="eyebrow" style="color:var(--brass-bright)">${esc(L.closing)} and after</span>
         <p style="font-family:var(--f-display);font-size:20px;line-height:1.45;margin-top:10px">${esc(B.aftercare)}</p>
+        <a href="#diary" class="btn" style="margin-top:18px;border-color:var(--brass-bright);color:var(--navy-ink)">Open your photo diary</a>
       </section>
     </div>
   </div>`;
@@ -714,7 +715,48 @@ function vTeam() {
   </div>`;
 }
 
-const VIEWS = { overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
+function vDiary() {
+  const p = P(), byDate = (a, b) => new Date(a.created_at) - new Date(b.created_at);
+  const chapters = S.d.phases.map((ph, i) => ({ ph, i, ups: S.d.updates.filter(u => u.phase_id === ph.id).sort(byDate) })).filter(c => c.ups.length);
+  const loose = S.d.updates.filter(u => !phaseById(u.phase_id)).sort(byDate);
+  if (loose.length) chapters.push({ ph: { name: 'Along the way' }, i: null, ups: loose });
+  const nPhotos = S.d.update_photos.length;
+  const nameParts = p.name.split(' '), last = nameParts.pop();
+  const img = ph => S.urls[ph.path] ? `<figure><img src="${esc(S.urls[ph.path])}" alt="${esc(ph.caption || '')}">${ph.caption ? `<figcaption>${esc(ph.caption)}</figcaption>` : ''}</figure>` : '';
+  const entry = u => { const ps = photosOf(u.id); return `<article class="entry">
+      <span class="eyebrow">${fdL(u.created_at.slice(0, 10))}</span>
+      ${u.body ? `<p class="entry-text">${esc(u.body)}</p>` : ''}
+      ${ps.length ? `<div class="entry-photos n${Math.min(ps.length, 3)}">${ps.map(img).join('')}</div>` : ''}
+    </article>`; };
+  return `
+  <div class="diary-tools">
+    <div><span class="eyebrow">Photo diary</span><p class="muted small" style="margin-top:4px">${S.d.updates.length} entries · ${nPhotos} photograph${nPhotos === 1 ? '' : 's'} · grows with every update from the site</p></div>
+    <div class="row"><button class="btn primary" data-act="print">Save as PDF or print</button></div>
+  </div>
+  <div class="diary">
+    <section class="diary-cover">
+      <span class="eyebrow">${esc(B.fullName)}</span>
+      <h1>${esc(nameParts.join(' '))} <em>${esc(last)}</em></h1>
+      <p class="sub">${[p.lot, p.address].filter(Boolean).map(esc).join(' · ')}</p>
+      ${p.cover_path && S.urls[p.cover_path] ? `<img class="cover-img" src="${esc(S.urls[p.cover_path])}" alt="">` : ELEV}
+      <div class="diary-cover-foot"><span class="ital">A photo diary of construction</span><span>${p.start_date ? fd(p.start_date, {month:'long', year:'numeric'}) : ''}${p.closing_date ? ' – ' + fd(p.closing_date, {month:'long', year:'numeric'}) : ''}</span></div>
+    </section>
+    ${chapters.length ? chapters.map(c => `
+    <section class="chapter">
+      <header class="ch-head">${c.i !== null ? `<span class="ch-num">${rom(c.i)}</span>` : ''}<div><h2>${esc(c.ph.name)}</h2>${c.ph.start_date ? `<span class="small muted">${fd(c.ph.start_date, {month:'long', day:'numeric'})} – ${fd(c.ph.end_date, {month:'long', day:'numeric', year:'numeric'})}</span>` : ''}</div></header>
+      ${c.ph.what ? `<p class="ch-intro">${esc(c.ph.what)}</p>` : ''}
+      ${c.ups.map(entry).join('')}
+    </section>`).join('') : `<div class="empty" style="margin-top:40px">The diary fills itself as updates are posted from the site.</div>`}
+    <section class="diary-end">
+      <span class="eyebrow">${esc(L.closing)}</span>
+      <h2>Welcome <span class="ital">home</span></h2>
+      ${p.closing_date ? `<p class="muted">${fdL(p.closing_date)}</p>` : ''}
+      <p class="muted small" style="margin-top:28px">${esc(B.fullName)}${B.tagline ? ' · ' + esc(B.tagline) : ''}</p>
+    </section>
+  </div>`;
+}
+
+const VIEWS = { diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
 /* ================= forms in modals ================= */
 function homeForm(p = {}) {
@@ -751,6 +793,7 @@ async function act(a, el) {
   const id = el.dataset.id;
   switch (a) {
     case 'modal-close': closeModal(); break;
+    case 'print': window.print(); break;
     case 'more': { const pop = $('#more-pop'); pop.hidden = !pop.hidden; break; }
     case 'more-sheet': {
       const items = [['timeline','Timeline'], ...MORE, ...(isStaff() ? [['homes','All homes']] : [])];
