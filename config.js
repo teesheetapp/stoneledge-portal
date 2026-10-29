@@ -184,6 +184,16 @@ window.PORTAL = {
       documentFolders: ["Plans", "Permits & inspections", "Agreements", "Change orders", "Selections", "Invoices", "Warranty & manuals", "Lot & survey"],
       requestKinds: ["Private site visit", "Design Center session"],
 
+      // Warranty service after move-in. phone falls back to the project manager's number.
+      warrantyService: {
+        response: "reply within one business day",
+        urgent: "For an active water leak, no heat or air conditioning in extreme weather, or an electrical problem, call us right away.",
+        emergency: "If you smell gas, leave the house and call 911 and your gas company first.",
+        visit: "Eleven-month walkthrough",
+        visitMonths: 11,
+        windows: ["Morning, 8 to 12", "Afternoon, 12 to 4", "All day"],
+        phone: "",
+      },
       warranty: [["Workmanship & materials", "1 year"], ["Plumbing, electrical & mechanical systems", "2 years"], ["Structure", "10 years"]],
       aftercare: "At the closing you receive your photo diary of the construction, your home information manual, and your warranty booklet. This portal keeps all of it, along with every drawing, finish, and manual, for as long as you own the home.",
       office: { address: "105 Regency Commons Drive, Greer, SC 29651", hours: "By appointment only" },

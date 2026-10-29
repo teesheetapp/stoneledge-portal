@@ -723,3 +723,33 @@ h1{font-size:clamp(38px,5.4vw,62px)}
   .moment-banner .btn{width:100%;justify-content:center}
   .mo-actions .btn{flex:1;justify-content:center}
 }
+
+/* ---------- warranty ---------- */
+.warranty-banner{border-left-color:var(--ink)}
+.wcover{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:24px}
+.wcov{background:var(--surface);border:1px solid var(--line);padding:20px 22px;display:flex;flex-direction:column;gap:6px}
+.wcov b{font-family:var(--f-display);font-weight:500;font-size:22px;line-height:1.2}
+.wcov.ended{opacity:.6}
+.wcov.visit{background:var(--surface-2);border-color:transparent}
+.wurgent{border:1px solid var(--line);border-left:2px solid var(--bad);padding:16px 20px;background:var(--surface)}
+.wurgent p{margin:6px 0 0;line-height:1.55}
+.wurgent a{color:var(--ink);font-weight:500;white-space:nowrap}
+.wurgent.compact{padding:12px 16px;margin-bottom:14px}
+.wurgent.compact p{margin:0;font-size:14px}
+.wreqs{display:grid;gap:14px}
+.wreq{background:var(--surface);border:1px solid var(--line);padding:22px 24px}
+.wreq.urgent{border-left:2px solid var(--bad)}
+.wreq h3{font-family:var(--f-display);font-weight:500;font-size:24px;margin:10px 0 2px}
+.wreq-details{margin:10px 0 0;max-width:68ch;line-height:1.6}
+.wreq-photos{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.wreq-photos .ph{width:96px;height:96px;aspect-ratio:auto}
+.wsteps{list-style:none;padding:0;margin:18px 0 0;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line)}
+.wsteps li{padding:10px 12px 0 0;display:flex;flex-direction:column;gap:2px;position:relative;color:var(--muted)}
+.wsteps li::before{content:"";position:absolute;top:-1px;left:0;right:12px;height:2px;background:transparent}
+.wsteps li.on::before{background:var(--brass)}
+.wsteps li span{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase}
+.wsteps li b{font-weight:400;font-size:14px;color:var(--ink)}
+.wsteps li:not(.on) b{color:var(--muted)}
+.wreq-resp{margin:16px 0 0;padding:12px 0 0 16px;border-left:2px solid var(--brass);font-family:var(--f-display);font-size:18px;line-height:1.5;display:flex;flex-direction:column;gap:4px}
+.wreq-resp .small{font-family:var(--f-body)}
+@media (max-width:640px){.wreq{padding:18px}.wsteps li b{font-size:13px}}

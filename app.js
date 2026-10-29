@@ -216,6 +216,7 @@ const TABLES = {
   selection_favorites: q => q,
   wall_photos: q => q.order('created_at'),
   home_items: q => q.order('position').order('created_at'),
+  warranty_requests: q => q.order('number', { ascending: false }),
   change_orders: q => q.order('number', { ascending: false }),
   draws: q => q.order('position'),
   events: q => q.order('starts_on'),
@@ -237,7 +238,7 @@ async function loadProject(pid, only) {
   if (!only || only.includes('project')) S.d.project = must(await sb.from('projects').select('*').eq('id', pid).single());
   const profs = must(await sb.from('profiles').select('id,full_name,title,phone,email,role,builder_id'));
   S.profiles = Object.fromEntries(profs.map(p => [p.id, p]));
-  await signPaths([...(S.d.update_photos || []).map(p => p.path), ...(S.d.wall_photos || []).map(p => p.path), ...(S.d.home_items || []).map(i => i.photo_path), ...(S.d.selection_options || []).map(o => o.image_path), S.d.project?.cover_path]);
+  await signPaths([...(S.d.update_photos || []).map(p => p.path), ...(S.d.wall_photos || []).map(p => p.path), ...(S.d.home_items || []).map(i => i.photo_path), ...(S.d.warranty_requests || []).flatMap(r => r.photos), ...(S.d.selection_options || []).map(o => o.image_path), S.d.project?.cover_path]);
   if (!only) {
     S.lastSeen = isStaff() ? store.get('portal.seen.' + pid) : S.d.project_members.find(m => m.user_id === S.me.id)?.last_seen_at;
     if (!S.ui.thread && S.d.threads[0]) S.ui.thread = S.d.threads[0].id;
@@ -274,6 +275,7 @@ function actionItems() {
   if (isStaff()) {
     S.d.selections.filter(s => s.status === 'submitted').forEach(s => items.push({ sort: s.due_date || '2999-01-01', k: 'Confirm', go: 'selections', t: s.category, d: `${clientFirst()} chose ${chosen(s)?.name || 'an option'}`, mine: true }));
     S.d.events.filter(e => e.status === 'requested').forEach(e => items.push({ sort: e.starts_on, k: 'Request', go: 'calendar', t: e.title.replace(' (requested)', ''), d: `${fd(e.starts_on)}${e.time_label ? ' · ' + e.time_label : ''}`, mine: true }));
+    openReqs().forEach(r => items.push({ sort: r.urgency === 'urgent' ? '1900-01-01' : r.created_at.slice(0,10), k: r.urgency === 'urgent' ? 'Urgent' : 'Warranty', go: 'warranty', t: `${wNo(r)} · ${r.title}`, d: `${r.room ? r.room + ' · ' : ''}from ${firstName(r.created_by)} · ${ft(r.created_at)}`, mine: true }));
     S.d.notes.filter(n => !n.reviewed).forEach(n => items.push({ sort: n.created_at.slice(0,10), k: 'Note', go: 'walkthrough', t: n.body.slice(0, 70), d: `${n.room || 'General'} · ${ft(n.created_at)}`, mine: true }));
   }
   return items.sort((a,b) => D(a.sort) - D(b.sort));
@@ -281,7 +283,7 @@ function actionItems() {
 
 /* ================= chrome ================= */
 const PRIMARY = [['overview','Overview'],['timeline','Timeline'],['updates','From the site'],['decisions','Decisions'],['messages','Messages']];
-const MORE = [['diary','Photo diary'],['walls','Behind the walls'],['manual','Home manual'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['glossary','Glossary'],['team','Your team']];
+const MORE = [['diary','Photo diary'],['walls','Behind the walls'],['manual','Home manual'],['warranty','Warranty'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['glossary','Glossary'],['team','Your team']];
 const DEC = [['questions','Questions'],['selections','Selections'],['changes','Change orders']];
 const isDec = v => DEC.some(d => d[0] === v);
 const ICONS = {
@@ -299,6 +301,7 @@ function badgeFor(v) {
   if (v === 'selections') return isStaff() ? S.d.selections.filter(s => s.status === 'submitted').length : selDueSoon().length;
   if (v === 'decisions') return DEC.reduce((a, d) => a + badgeFor(d[0]), 0);
   if (v === 'walkthrough' && isStaff()) return S.d.notes.filter(n => !n.reviewed).length;
+  if (v === 'warranty' && isStaff()) return openReqs().length;
   if (v === 'calendar' && isStaff()) return S.d.events.filter(e => e.status === 'requested').length;
   if (v === 'more') return MORE.reduce((a, m) => a + badgeFor(m[0]), 0);
   return 0;
@@ -423,7 +426,7 @@ function vOverview() {
     <div class="rail" style="grid-template-columns:repeat(${S.d.phases.length || 1},minmax(0,1fr))" aria-label="Build progress by phase">${S.d.phases.map(ph => `<div class="${ph.status === 'current' ? 'cur' : ph.status}" title="${esc(ph.name)}"><i></i></div>`).join('')}</div>
     <div class="rail-foot"><span>${cp ? `<span class="ital now">${rom(S.d.phases.indexOf(cp))}</span> ${esc(short(cp.name))}${cp.end_date ? ` <span class="muted-h">· through ${fd(cp.end_date)}</span>` : ''}` : 'Schedule to be set'}</span><a href="#timeline" class="rail-link"><b class="num">${progressOf(S.d.phases)}%</b> complete →</a></div>
   </section>
-  ${pmNote()}${momentBanner()}
+  ${pmNote()}${momentBanner()}${warrantyCard()}
   <div class="grid2">
     <section>
       <div class="sec-h"><h2>${isStaff() ? 'Needs attention' : 'Awaiting your attention'}</h2><span class="aside">${items.length} item${items.length === 1 ? '' : 's'}</span></div>
@@ -985,7 +988,7 @@ function manItem(it, showRoom) {
       ${line ? `<div class="man-line">${line}</div>` : ''}
       ${it.detail ? `<div class="small muted">${esc(it.detail)}</div>` : ''}
       ${it.care ? `<details class="man-care"><summary>Care</summary><p>${gloss(it.care)}</p></details>` : ''}
-      <div class="row man-foot">${warrantyTag(it)}${doc ? `<button class="btn sm ghost" data-act="doc-open" data-id="${doc.id}">Manual</button>` : ''}${isStaff() ? `<button class="edit-link" data-act="man-edit" data-id="${it.id}">Edit</button>` : ''}</div>
+      <div class="row man-foot">${warrantyTag(it)}${doc ? `<button class="btn sm ghost" data-act="doc-open" data-id="${doc.id}">Manual</button>` : ''}${!isStaff() && isClosed() ? `<button class="edit-link" data-act="warr-new" data-item="${it.id}">Request service</button>` : ''}${isStaff() ? `<button class="edit-link" data-act="man-edit" data-id="${it.id}">Edit</button>` : ''}</div>
     </div></article>`;
 }
 function manRooms() {
@@ -1153,8 +1156,78 @@ function momentBanner() {
     <p class="small">${isStaff() ? `${esc(clientFirst())} can share a card of this moment with family and friends.` : `${esc(short(ph.name))} is complete. Share the moment with family and friends.`}</p></div>
     <button class="btn" data-act="moment" data-id="${ph.id}">${isStaff() ? 'See their card' : 'Share the moment'}</button></section>`;
 }
+/* ================= warranty ================= */
+const WST = { new: ['Received', 'solid'], scheduled: ['Visit scheduled', 'brass'], resolved: ['Resolved', 'good'], not_covered: ['Closed', ''] };
+const wNo = r => `W-${String(r.number).padStart(2, '0')}`;
+// The home is "closed" once the closing date has passed or the last phase is done
+const isClosed = () => { const p = P(), last = S.d.phases[S.d.phases.length - 1]; return (p.closing_date && daysTo(p.closing_date) <= 0) || last?.status === 'done'; };
+const closedOn = () => { const p = P(), last = S.d.phases[S.d.phases.length - 1]; return (p.closing_date && daysTo(p.closing_date) <= 0) ? p.closing_date : (last?.completed_at || '').slice(0, 10) || p.closing_date; };
+const addMonths = (iso, m) => { const d = D(iso); d.setMonth(d.getMonth() + m); return d.toISOString().slice(0, 10); };
+const termMonths = t => { const m = String(t).match(/(\d+)\s*(year|month)/i); return m ? (+m[1]) * (/year/i.test(m[2]) ? 12 : 1) : null; };
+const W = () => B.warrantyService || {};
+const openReqs = () => (S.d.warranty_requests || []).filter(r => r.status === 'new');
+const urgentPhone = () => W().phone || pm()?.phone || '';
+function warrantyCard() {
+  if (isStaff() || !isClosed()) return '';
+  const first = B.warranty[0], end = first && termMonths(first[1]) ? addMonths(closedOn(), termMonths(first[1])) : null;
+  const open = (S.d.warranty_requests || []).filter(r => ['new', 'scheduled'].includes(r.status));
+  return `<section class="moment-banner warranty-banner"><div class="mb-text"><span class="eyebrow">Warranty</span><h3>We’re still here for you.</h3>
+    <p class="small">${open.length ? `${open.length} request${open.length > 1 ? 's' : ''} open with your team.` : end ? `${esc(first[0])} covered through ${fdL(end)}.` : 'Your home is under warranty.'} Something not right? Tell us and we’ll take care of it.</p></div>
+    <button class="btn" data-act="warr-new">Request service</button></section>`;
+}
+function reqCard(r) {
+  const [label, cls] = WST[r.status] || [r.status, ''];
+  const it = r.home_item_id && (S.d.home_items || []).find(i => i.id === r.home_item_id);
+  const steps = [['Requested', r.created_at && fd(r.created_at)], ['Scheduled', r.scheduled_for && `${fd(r.scheduled_for)}${r.scheduled_window ? ', ' + r.scheduled_window.toLowerCase() : ''}`], [r.status === 'not_covered' ? 'Closed' : 'Resolved', r.resolved_at && fd(r.resolved_at)]];
+  return `<article class="wreq${r.urgency === 'urgent' && r.status === 'new' ? ' urgent' : ''}">
+    <div class="spread" style="gap:10px"><div class="row" style="gap:10px"><span class="eyebrow" style="color:var(--muted)">${wNo(r)}</span><span class="tag ${cls}">${label}</span>${r.urgency === 'urgent' ? '<span class="tag bad">Urgent</span>' : ''}</div>
+      <span class="small muted">${esc(nameOf(r.created_by))} · ${ft(r.created_at)}</span></div>
+    <h3>${esc(r.title)}</h3>
+    <div class="small muted">${[r.room, it && `${it.name}${it.maker ? ' · ' + it.maker : ''}`].filter(Boolean).map(esc).join(' · ')}</div>
+    ${r.details ? `<p class="wreq-details">${esc(r.details)}</p>` : ''}
+    ${r.photos.length ? `<div class="wreq-photos">${r.photos.map((p, i) => S.urls[p] ? `<button class="ph" data-act="warr-photo" data-id="${r.id}" data-v="${i}" aria-label="Photo ${i + 1}"><img src="${esc(S.urls[p])}" alt="" loading="lazy"></button>` : '').join('')}</div>` : ''}
+    <ol class="wsteps">${steps.map(([k, v]) => `<li class="${v ? 'on' : ''}"><span>${k}</span><b>${v || '—'}</b></li>`).join('')}</ol>
+    ${r.response ? `<blockquote class="wreq-resp">${esc(r.response)}<span class="small muted">${esc(firstName(pm()?.id) || 'Your team')}</span></blockquote>` : ''}
+    ${isStaff() && ['new', 'scheduled'].includes(r.status) ? `<div class="row" style="gap:8px;margin-top:12px"><button class="btn sm primary" data-act="warr-sched" data-id="${r.id}">${r.status === 'scheduled' ? 'Reschedule' : 'Schedule a visit'}</button><button class="btn sm" data-act="warr-resolve" data-id="${r.id}">Mark resolved</button><button class="btn sm ghost" data-act="warr-nc" data-id="${r.id}">Not covered</button></div>` : ''}
+  </article>`;
+}
+function vWarranty() {
+  const closed = isClosed(), on = closedOn(), reqs = S.d.warranty_requests || [];
+  const open = reqs.filter(r => ['new', 'scheduled'].includes(r.status)).sort((a, b) => (a.status === 'new' ? 0 : 1) - (b.status === 'new' ? 0 : 1) || (b.urgency === 'urgent') - (a.urgency === 'urgent') || b.number - a.number);
+  const done = reqs.filter(r => !['new', 'scheduled'].includes(r.status)).sort((a, b) => b.number - a.number);
+  const visit = W().visit, vm = W().visitMonths || 11;
+  const cover = `<div class="wcover">${B.warranty.map(([k, v]) => { const m = termMonths(v), end = closed && on && m ? addMonths(on, m) : null, live = end && daysTo(end) > 0;
+      return `<div class="wcov${end && !live ? ' ended' : ''}"><span class="eyebrow">${esc(v)}</span><b>${esc(k)}</b><span class="small muted">${end ? (live ? `Through ${fdL(end)}` : `Ended ${fdL(end)}`) : `Begins at ${esc(L.closing.toLowerCase().startsWith('the') ? L.closing.replace(/^The/, 'the') : L.closing)}`}</span></div>`; }).join('')}
+    ${visit ? `<div class="wcov visit"><span class="eyebrow">${esc(visit)}</span><b>${closed && on ? fd(addMonths(on, vm), { month: 'long', year: 'numeric' }) : `${vm} months after closing`}</b><span class="small muted">We walk the house with you and take care of anything that’s settled in. We’ll reach out to schedule.</span></div>` : ''}</div>`;
+  const urgent = `<aside class="wurgent"><span class="eyebrow">Something urgent?</span><p>${esc(W().urgent || 'For an active water leak, no heat or cooling in extreme weather, or an electrical problem, call us right away.')}${urgentPhone() ? ` <a href="tel:${esc(urgentPhone().replace(/[^\d+]/g, ''))}">${esc(urgentPhone())}</a>` : ''}</p>${W().emergency ? `<p class="small muted">${esc(W().emergency)}</p>` : ''}</aside>`;
+  const head = pageHead('Warranty', closed ? 'We’re still <span class="ital">here for you</span>' : 'Covered <span class="ital">from day one</span>',
+    closed ? `Something not right? Tell us what you’re seeing, add a photo, and ${esc(firstName(pm()?.id) || 'your team')} will ${esc(W().response || 'reply within one business day')}.` : `Your warranty begins at ${esc(L.closing.toLowerCase().startsWith('the') ? L.closing.replace(/^The/, 'the') : L.closing)}${P().closing_date ? `, ${fdL(P().closing_date)}` : ''}. After you move in, this is where you’ll request service.`,
+    isStaff() ? `<button class="btn primary" data-act="warr-new">Log a request</button>` : closed ? `<button class="btn primary" data-act="warr-new">Request service</button>` : '');
+  return head + cover + (closed || isStaff() ? urgent : '') +
+    `<section style="margin-top:48px"><div class="sec-h"><h2>${isStaff() ? 'Requests' : 'Your requests'}</h2><span class="aside">${open.length} open</span></div>
+      ${open.length ? `<div class="wreqs">${open.map(reqCard).join('')}</div>` : `<div class="empty">${closed ? 'No open requests. If anything needs attention, we’re a tap away.' : 'Requests open after you move in.'}</div>`}</section>
+    ${done.length ? `<section style="margin-top:40px"><div class="sec-h"><h2>Resolved</h2><span class="aside">${done.length}</span></div><div class="wreqs">${done.map(reqCard).join('')}</div></section>` : ''}`;
+}
+function warrForm() {
+  const d = S.warrDraft, items = (S.d.home_items || []).filter(i => !d.room || i.room === d.room || i.room === WHOLE);
+  const rooms = [...new Set([...(S.d.home_items || []).map(i => i.room).filter(r => r !== WHOLE), ...(B.wallRooms || []), 'Exterior', 'Whole home'])];
+  return `<span class="eyebrow">${isStaff() ? 'Log a warranty request' : 'Request service'}</span><h2>What’s happening?</h2>
+    <div class="field"><label for="wr-title">In a few words</label><input id="wr-title" value="${esc(d.title || '')}" placeholder="Pantry door sticks at the top" maxlength="120"></div>
+    <div class="form-grid">
+      <div class="field"><label for="wr-room">Where</label><input id="wr-room" list="wr-rooms" value="${esc(d.room || '')}" placeholder="Kitchen" autocomplete="off"><datalist id="wr-rooms">${rooms.map(r => `<option value="${esc(r)}">`).join('')}</datalist></div>
+      <div class="field"><label for="wr-item">Related item (optional)</label><select id="wr-item"><option value="">Not sure / none</option>${items.map(i => `<option value="${i.id}"${i.id === d.home_item_id ? ' selected' : ''}>${esc(i.room === d.room ? i.name : `${i.room} · ${i.name}`)}${i.maker ? ' · ' + esc(i.maker) : ''}</option>`).join('')}</select></div>
+    </div>
+    <div class="field"><label for="wr-details">Tell us more</label><textarea id="wr-details" rows="4" placeholder="When did you notice it? Does it happen all the time or only sometimes?">${esc(d.details || '')}</textarea></div>
+    <div class="field"><span>How soon</span><div class="chips"><button type="button" class="chip" data-act="wr-urg" data-v="routine" aria-pressed="${d.urgency !== 'urgent'}">It can wait for a visit</button><button type="button" class="chip" data-act="wr-urg" data-v="urgent" aria-pressed="${d.urgency === 'urgent'}">It’s urgent</button></div></div>
+    ${d.urgency === 'urgent' ? `<div class="wurgent compact"><p>${esc(W().urgent || 'For an active water leak, no heat or cooling in extreme weather, or an electrical problem, call us right away.')}${urgentPhone() ? ` <a href="tel:${esc(urgentPhone().replace(/[^\d+]/g, ''))}">${esc(urgentPhone())}</a>` : ''}</p></div>` : ''}
+    <label class="drop" for="wr-files" style="position:relative">${S.draft.length ? `${S.draft.length} photo${S.draft.length > 1 ? 's' : ''} added · add more` : 'Add photos (they help us bring the right part)'}<input type="file" id="wr-files" accept="image/*" multiple></label>
+    ${S.draft.length ? `<div class="thumbs">${S.draft.map(x => `<div class="ph" style="cursor:default"><img src="${x.preview}" alt=""></div>`).join('')}</div>` : ''}
+    <p class="inline-err" id="wr-err" hidden></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="warr-send">${isStaff() ? 'Log request' : 'Send request'}</button></div>`;
+}
+const keepWarr = () => { if (!$('#wr-title')) return; Object.assign(S.warrDraft, { title: val('wr-title'), room: val('wr-room'), home_item_id: $('#wr-item').value || null, details: $('#wr-details').value.trim() }); };
 
-const VIEWS = { manual: vManual, glossary: vGlossary, walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
+const VIEWS = { warranty: vWarranty, manual: vManual, glossary: vGlossary, walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
 /* ================= note from the project manager ================= */
 function pmNote() {
@@ -1273,6 +1346,46 @@ async function act(a, el) {
         <img src="${esc(S.urls[w.path])}" alt="${esc(w.room)}" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">
         <div class="row" style="justify-content:space-between"><div class="row" style="gap:6px">${w.systems.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><span class="small muted">${list.length > 1 ? `${i + 1} of ${list.length} · ` : ''}Photographed ${fd(w.taken_on, { month: 'long', day: 'numeric', year: 'numeric' })}${isStaff() ? ` · <button class="edit-link" data-act="wall-del" data-id="${w.id}">Delete</button>` : ''}</span></div>`, true); break; }
     case 'term': showTerm(el); break;
+    case 'warr-new': { const it = el.dataset.item && S.d.home_items.find(x => x.id === el.dataset.item); S.draft = []; S.warrDraft = { urgency: 'routine', home_item_id: it?.id || null, room: it && it.room !== WHOLE ? it.room : '' }; modal(warrForm(), true); break; }
+    case 'wr-urg': keepWarr(); S.warrDraft.urgency = el.dataset.v; modal(warrForm(), true); break;
+    case 'warr-send': {
+      keepWarr(); const d = S.warrDraft, err = $('#wr-err');
+      if (!d.title) { err.textContent = 'Tell us in a few words what’s happening.'; err.hidden = false; $('#wr-title').focus(); break; }
+      el.textContent = 'Sending';
+      const photos = [];
+      for (const x of S.draft) { const path = `${S.pid}/warranty/${crypto.randomUUID()}.jpg`; await upload(path, x.blob, 'image/jpeg'); photos.push(path); }
+      must(await sb.from('warranty_requests').insert({ project_id: S.pid, title: d.title, room: d.room || null, home_item_id: d.home_item_id, details: d.details || null, urgency: d.urgency || 'routine', photos, created_by: S.me.id }));
+      await log(`requested warranty service: ${d.title}`, 'warranty');
+      S.draft = []; closeModal(); await refresh(['warranty_requests', 'activity']);
+      if (location.hash !== '#warranty') location.hash = 'warranty';
+      toast(isStaff() ? 'Request logged' : `Sent. ${firstName(pm()?.id) || 'Your team'} will ${W().response || 'reply within one business day'}.`); break; }
+    case 'warr-photo': { const r = S.d.warranty_requests.find(x => x.id === id), u = S.urls[r.photos[+el.dataset.v]];
+      modal(`<div class="spread"><div><span class="eyebrow">${wNo(r)}</span><h3 style="margin-top:6px">${esc(r.title)}</h3></div><button class="btn sm ghost" data-act="modal-close">Close</button></div><img src="${esc(u)}" alt="" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">`, true); break; }
+    case 'warr-sched': { const r = S.d.warranty_requests.find(x => x.id === id), wins = W().windows || ['Morning, 8 to 12', 'Afternoon, 12 to 4', 'All day'];
+      modal(`<span class="eyebrow">${wNo(r)} · ${esc(r.title)}</span><h2>Schedule a visit</h2>
+        <div class="form-grid"><div class="field"><label for="ws-date">Date</label><input id="ws-date" type="date" value="${esc(r.scheduled_for || '')}"></div>
+        <div class="field"><label for="ws-win">Time</label><select id="ws-win">${wins.map(w => `<option${w === r.scheduled_window ? ' selected' : ''}>${esc(w)}</option>`).join('')}</select></div></div>
+        <div class="field"><label for="ws-note">Note to ${esc(clientFirst())}</label><textarea id="ws-note" rows="3" placeholder="Our trim carpenter will plane the door and touch up the paint. About an hour.">${esc(r.response || '')}</textarea></div>
+        <p class="small muted">${esc(clientFirst())} is emailed the date, and it’s added to the calendar.</p>
+        <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="warr-sched-save" data-id="${r.id}">Schedule</button></div>`); break; }
+    case 'warr-sched-save': {
+      const r = S.d.warranty_requests.find(x => x.id === id), date = $('#ws-date').value, win = $('#ws-win').value;
+      if (!date) { toast('Choose a date'); $('#ws-date').focus(); break; }
+      must(await sb.from('warranty_requests').update({ status: 'scheduled', scheduled_for: date, scheduled_window: win, response: val('ws-note') || null }).eq('id', id));
+      const title = `Warranty visit · ${wNo(r)}`, ev = S.d.events.find(e => e.title === title);
+      if (ev) must(await sb.from('events').update({ starts_on: date, time_label: win, note: r.title }).eq('id', ev.id));
+      else must(await sb.from('events').insert({ project_id: S.pid, starts_on: date, time_label: win, title, kind: 'Warranty visit', note: r.title, status: 'scheduled' }));
+      await log(`scheduled a warranty visit for ${fd(date)}`, 'warranty'); closeModal(); await refresh(['warranty_requests', 'events', 'activity']); toast(`Scheduled. ${clientFirst()} will be emailed.`); break; }
+    case 'warr-resolve': case 'warr-nc': { const r = S.d.warranty_requests.find(x => x.id === id), nc = a === 'warr-nc';
+      modal(`<span class="eyebrow">${wNo(r)} · ${esc(r.title)}</span><h2>${nc ? 'Not covered' : 'Mark resolved'}</h2>
+        <div class="field"><label for="wn-note">${nc ? `Explain to ${esc(clientFirst())} why, and what we suggest` : 'What we did'}</label><textarea id="wn-note" rows="4" placeholder="${nc ? 'Hairline cracks in grout from normal settling are covered once, at your eleven-month walkthrough. We’ll take care of it then.' : 'Planed the top of the door and repainted the edge. It closes smoothly now.'}">${esc(nc ? '' : (r.status === 'scheduled' ? '' : r.response || ''))}</textarea></div>
+        <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="warr-close" data-id="${r.id}" data-v="${nc ? 'not_covered' : 'resolved'}">${nc ? 'Close request' : 'Mark resolved'}</button></div>`); break; }
+    case 'warr-close': {
+      const note = $('#wn-note').value.trim(); if (!note) { toast('Add a sentence for the homeowner'); $('#wn-note').focus(); break; }
+      must(await sb.from('warranty_requests').update({ status: el.dataset.v, response: note }).eq('id', id));
+      const r = S.d.warranty_requests.find(x => x.id === id), ev = S.d.events.find(e => e.title === `Warranty visit · ${wNo(r)}`);
+      if (ev && el.dataset.v === 'resolved') await sb.from('events').update({ status: 'done' }).eq('id', ev.id);
+      await log(`${el.dataset.v === 'resolved' ? 'resolved' : 'closed'} warranty request ${wNo(r)}`, 'warranty'); closeModal(); await refresh(['warranty_requests', 'events', 'activity']); toast(el.dataset.v === 'resolved' ? 'Resolved' : 'Closed'); break; }
     case 'moment': S.moment = null; await openMoment(id); break;
     case 'moment-photo': S.moment.photo = el.dataset.v || null; document.querySelectorAll('.mo-ph').forEach(b => b.setAttribute('aria-pressed', b === el)); await paintMoment(); break;
     case 'moment-copy': await navigator.clipboard.writeText(val('mo-cap')).then(() => toast('Caption copied'), () => toast('Select the caption and copy it')); break;
@@ -1686,6 +1799,8 @@ document.addEventListener('change', async e => {
       const blob = await compress(t.files[0], 1600); S.manPhoto = { blob, preview: URL.createObjectURL(blob) };
       const pv = $('#mf-prev'); if (pv) pv.outerHTML = `<img id="mf-prev" src="${S.manPhoto.preview}" alt="">`; const lb = t.closest('label'); if (lb) lb.firstChild.textContent = 'Replace photo';
     }
+    if (t.id === 'wr-files') { keepWarr(); for (const f of [...t.files].slice(0, 6)) { const blob = await compress(f, 1800); S.draft.push({ blob, preview: URL.createObjectURL(blob) }); } modal(warrForm(), true); }
+    if (t.id === 'wr-room') { keepWarr(); const it = S.d.home_items?.find(i => i.id === S.warrDraft.home_item_id); if (it && it.room !== S.warrDraft.room) S.warrDraft.home_item_id = null; modal(warrForm(), true); $('#wr-details')?.focus(); }
     if (t.id === 'mo-name') { S.moment.showName = t.checked; await paintMoment(); }
     if (t.id === 'mf-cat') {
       const care = $('#mf-care'), old = manCare(S.manDraft.category);

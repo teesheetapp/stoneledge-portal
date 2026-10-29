@@ -120,7 +120,7 @@ async function instant(c: Ctx) {
   const pids = [...c.projects.keys()];
   if (!pids.length) return;
   const q = (t: string) => admin.from(t).select("*").in("project_id", pids);
-  const [qs, cos, sels, opts, ups, msgs, evs, notes, threads] = await Promise.all([
+  const [qs, cos, sels, opts, ups, msgs, evs, notes, threads, warr] = await Promise.all([
     q("questions").or(`created_at.gte.${since},answered_at.gte.${since}`),
     q("change_orders").or(`created_at.gte.${since},signed_at.gte.${since}`),
     q("selections").or(`opened_at.gte.${since},submitted_at.gte.${since}`),
@@ -130,6 +130,7 @@ async function instant(c: Ctx) {
     q("events").eq("status", "requested").gte("created_at", since),
     q("notes").gte("created_at", since),
     q("threads"),
+    q("warranty_requests").or(`created_at.gte.${since},scheduled_at.gte.${since},resolved_at.gte.${since}`),
   ]);
   const ctxOf = (pid: string) => ({ p: c.projects.get(pid), b: c.builders.get(c.projects.get(pid)?.builder_id) });
 
@@ -214,6 +215,26 @@ async function instant(c: Ctx) {
       await send(c, to, x.project_id, "request", x.id, `${nameOf(c, x.requested_by)} requested a ${x.kind.toLowerCase()}`, layout(b, p, {
         preheader: `${fd(x.starts_on)}${x.time_label ? ", " + x.time_label.toLowerCase() : ""}.`, eyebrow: p.name, title: `${esc(x.kind)} <em>requested</em>`,
         body: rows([["Preferred date", fd(x.starts_on)], ["Time of day", esc(x.time_label || "Any")]]) + (x.note ? quote(esc(x.note)) : ""), cta: { label: "Confirm in the calendar", url: link(b, "calendar") } }));
+  }
+
+  for (const x of warr.data || []) {
+    const { p, b } = ctxOf(x.project_id); if (!p || !b) continue;
+    const no = `W-${String(x.number).padStart(2, "0")}`, img = x.photos?.length ? await signedUrl(x.photos[0]) : undefined;
+    if (x.created_at >= since && isClient(c, x.created_by)) for (const to of teamFor(c, x.project_id).filter((u) => u.email_updates))
+      await send(c, to, x.project_id, "warranty", x.id, `${x.urgency === "urgent" ? "Urgent: " : ""}${no} warranty request from ${first(nameOf(c, x.created_by))}: ${x.title}`, layout(b, p, {
+        preheader: [x.room, x.details].filter(Boolean).join(" · ").slice(0, 120) || "A new warranty request.", eyebrow: `Warranty ${no}${x.urgency === "urgent" ? " · urgent" : ""}`, title: esc(x.title), hero: img,
+        body: rows([["Home", esc(p.name)], ["Where", esc(x.room || "Not given")], ["From", esc(nameOf(c, x.created_by))]]) + (x.details ? quote(esc(x.details)) : "") + (x.photos?.length > 1 ? P_(`${x.photos.length} photos attached.`) : ""),
+        cta: { label: "Schedule a visit", url: link(b, "warranty") } }));
+    if (x.status === "scheduled" && x.scheduled_at >= since && x.scheduled_for) for (const to of clientsOf(c, x.project_id).filter((u) => u.email_updates))
+      await send(c, to, x.project_id, "warranty_scheduled", x.id + ":" + x.scheduled_for, `Your warranty visit is scheduled: ${fd(x.scheduled_for, { weekday: "long", month: "long", day: "numeric" })}`, layout(b, p, {
+        preheader: `${x.title}. ${x.scheduled_window || ""}`.trim(), eyebrow: `Warranty ${no}`, title: `We’ll see you <em>${fd(x.scheduled_for, { weekday: "long", month: "long", day: "numeric" })}</em>`,
+        body: rows([["Request", esc(x.title)], ["Date", fd(x.scheduled_for, { weekday: "long", month: "long", day: "numeric" })], ["Time", esc(x.scheduled_window || "To be confirmed")]]) + (x.response ? quote(esc(x.response)) : ""),
+        cta: { label: "See the details", url: link(b, "warranty") } }), teamFor(c, x.project_id)[0]?.email);
+    if (["resolved", "not_covered"].includes(x.status) && x.resolved_at >= since) for (const to of clientsOf(c, x.project_id).filter((u) => u.email_updates))
+      await send(c, to, x.project_id, "warranty_" + x.status, x.id, x.status === "resolved" ? `Taken care of: ${x.title}` : `About your request: ${x.title}`, layout(b, p, {
+        preheader: (x.response || "").slice(0, 120), eyebrow: `Warranty ${no}`, title: x.status === "resolved" ? `Taken <em>care of</em>` : `About your <em>request</em>`,
+        body: P_(esc(x.title)) + (x.response ? quote(esc(x.response)) : "") + P_(`<span style="color:#67696B;font-size:14px">If anything else comes up, you can request service any time from your portal.</span>`),
+        cta: { label: "Open your warranty page", url: link(b, "warranty") } }), teamFor(c, x.project_id)[0]?.email);
   }
 
   for (const x of notes.data || []) {
