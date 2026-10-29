@@ -506,3 +506,15 @@ h1{font-size:clamp(38px,5.4vw,62px)}
 @media print{ .diary-logo{height:64px} }
 .wordmark img{max-height:none}
 .wordmark span.logo{display:block}
+
+/* ===== email settings + preview ===== */
+.switch{display:flex;gap:12px;align-items:flex-start;font-size:14.5px;line-height:1.45;cursor:pointer;padding:6px 0;text-transform:none;letter-spacing:0;color:var(--ink);font-weight:400}
+.switch input{appearance:none;-webkit-appearance:none;flex:none;width:38px;height:22px;border-radius:99px;background:var(--line);position:relative;cursor:pointer;margin-top:1px;transition:background .15s}
+.switch input::after{content:"";position:absolute;top:3px;left:3px;width:16px;height:16px;border-radius:99px;background:var(--surface);transition:transform .15s}
+.switch input:checked{background:var(--brass)}
+.switch input:checked::after{transform:translateX(16px)}
+.switch input:focus-visible{outline:1.5px solid var(--brass);outline-offset:3px}
+.emails{grid-column:1/-1;margin-top:8px}
+.email-log{max-height:420px;overflow:auto}
+.email-frame{width:100%;height:70vh;border:1px solid var(--line);background:#F1F0EC}
+.field > label.switch{text-transform:none;letter-spacing:0;font-size:14.5px;color:var(--ink);font-weight:400}

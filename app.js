@@ -69,7 +69,7 @@ const store = { get(k) { try { return localStorage.getItem(k); } catch { return 
 
 let tT;
 function toast(t) { const el = $('#toast'); el.textContent = t; el.hidden = false; clearTimeout(tT); tT = setTimeout(() => el.hidden = true, 3200); }
-function modal(html, wide) { const m = $('#modal'); m.innerHTML = `<div class="scrim" data-act="modal-close"></div><div class="dialog ${wide ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div>`; m.hidden = false; m.querySelector('input,textarea,select')?.focus(); }
+function modal(html, wide) { document.querySelectorAll('.pop').forEach(x => x.hidden = true); const m = $('#modal'); m.innerHTML = `<div class="scrim" data-act="modal-close"></div><div class="dialog ${wide ? 'wide' : ''}" role="dialog" aria-modal="true">${html}</div>`; m.hidden = false; m.querySelector('input,textarea,select')?.focus(); }
 function closeModal() { $('#modal').hidden = true; $('#modal').innerHTML = ''; S.draft = []; }
 
 async function compress(file, max = 2000, q = 0.84) {
@@ -207,10 +207,13 @@ const TABLES = {
   messages: q => q.order('created_at'),
   activity: q => q.order('created_at', { ascending: false }).limit(40),
   project_members: q => q,
+  notifications: q => q,
 };
 async function loadProject(pid, only) {
   const keys = (only || Object.keys(TABLES)).filter(k => TABLES[k]);
-  const res = await Promise.all(keys.map(t => TABLES[t](sb.from(t).select('*').eq('project_id', pid))));
+  const res = await Promise.all(keys.map(t => t === 'notifications'
+    ? (isStaff() ? sb.from('notifications').select('id,kind,subject,to_email,status,error,created_at').eq('project_id', pid).order('created_at', { ascending: false }).limit(25) : Promise.resolve({ data: [] }))
+    : TABLES[t](sb.from(t).select('*').eq('project_id', pid))));
   if (!only || !S.d) S.d = {};
   keys.forEach((t, i) => { if (res[i].error) throw res[i].error; S.d[t] = res[i].data; });
   if (!only || only.includes('project')) S.d.project = must(await sb.from('projects').select('*').eq('id', pid).single());
@@ -714,6 +717,7 @@ function vTeam() {
       ${P().address ? `<div class="copyline" style="margin-top:14px"><span class="muted caps">Site</span><span>${esc(P().address)}</span></div>` : ''}
       ${P().permit ? `<div class="copyline" style="margin-top:14px"><span class="muted caps">Permit</span><span>${esc(P().permit)}</span></div>` : ''}
       ${isStaff() ? `<div style="margin-top:16px">${editBtn('home-edit', null, 'Edit site access & permit')}</div>` : ''}</section>
+    ${isStaff() ? emailPanel() : ''}
   </div>`;
 }
 
@@ -758,6 +762,16 @@ function vDiary() {
   </div>`;
 }
 
+function emailPanel() {
+  const st = { sent: ['good', 'Sent'], preview: ['', 'Not sent (email not connected)'], skipped: ['', 'Demo address'], failed: ['bad', 'Failed'], pending: ['', 'Sending'] };
+  const log = S.d.notifications || [];
+  return `<section class="emails">
+    <div class="sec-h"><h2>Emails</h2><button class="btn sm" data-act="email-preview">Preview this Friday’s email</button></div>
+    <p class="small muted" style="margin-bottom:12px">${esc(clientFirst())} get an email when something needs them, a reminder before it’s due, and “Your home this week” every Friday afternoon. You’re emailed when they act or message.</p>
+    ${log.length ? `<div class="email-log">${log.map(n => `<div class="spread" style="padding:10px 0;border-bottom:1px solid var(--line);flex-wrap:nowrap;align-items:flex-start"><div style="min-width:0"><div>${esc(n.subject)}</div><div class="small muted">${esc(n.to_email)} · ${ft(n.created_at)}</div></div><span class="tag ${st[n.status]?.[0] || ''}" style="flex:none">${st[n.status]?.[1] || esc(n.status)}</span></div>`).join('')}</div>` : '<p class="muted small">No emails yet for this home.</p>'}
+  </section>`;
+}
+
 const VIEWS = { diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
 /* ================= forms in modals ================= */
@@ -786,6 +800,7 @@ function postSheet() {
     ${S.draft.length ? `<div class="thumbs">${S.draft.map((d, i) => `<div class="ph" style="cursor:default"><img src="${d.preview}" alt=""><button class="edit-link" data-act="draft-del" data-i="${i}" style="position:absolute;top:4px;right:6px;color:#fff;z-index:2">✕</button></div>`).join('')}</div>` : ''}
     <div class="field"><label for="post-text">What happened</label><textarea id="post-text" placeholder="Short and specific. What got done, what's next.">${esc(S.postText || '')}</textarea></div>
     <div class="field"><label for="post-phase">Phase</label><select id="post-phase">${S.d.phases.map((p, i) => `<option value="${p.id}" ${cp && p.id === cp.id ? 'selected' : ''}>${rom(i)}. ${esc(short(p.name))}</option>`).join('')}</select></div>
+    <label class="switch"><input type="checkbox" id="post-now"><span>Also email ${esc(clientFirst())} now <span class="muted">(otherwise it’s in Friday’s email)</span></span></label>
     <p class="inline-err" id="post-err" hidden></p>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="post-send">Post</button></div>`;
 }
@@ -796,6 +811,13 @@ async function act(a, el) {
   switch (a) {
     case 'modal-close': closeModal(); break;
     case 'print': window.print(); break;
+    case 'email-preview': {
+      el.textContent = 'Preparing';
+      const { data, error } = await sb.functions.invoke('notify', { body: { mode: 'preview', project_id: S.pid } });
+      if (error) { let m = error.message; try { m = (await error.context.json()).error || m; } catch {} throw new Error(m); }
+      modal(`<div class="spread"><div><span class="eyebrow">Preview · not sent</span><h3 style="margin-top:6px">${esc(data.subject)}</h3></div><button class="btn sm ghost" data-act="modal-close">Close</button></div>
+        <iframe class="email-frame" title="Email preview" sandbox="allow-popups"></iframe>`, true);
+      $('#modal .email-frame').srcdoc = data.html; break; }
     case 'more': { const pop = $('#more-pop'); pop.hidden = !pop.hidden; break; }
     case 'more-sheet': {
       const items = [['timeline','Timeline'], ...MORE, ...(isStaff() ? [['homes','All homes']] : [])];
@@ -818,9 +840,12 @@ async function act(a, el) {
         <div class="field"><label for="me-name">Full name</label><input id="me-name" value="${esc(S.me.full_name || '')}"></div>
         <div class="field"><label for="me-phone">Phone</label><input id="me-phone" type="tel" value="${esc(S.me.phone || '')}"></div>
         ${isStaff() ? `<div class="field"><label for="me-title">Title</label><input id="me-title" value="${esc(S.me.title || '')}"></div>` : ''}
+        <div class="field"><span>Email</span>
+          <label class="switch"><input type="checkbox" id="me-upd" ${S.me.email_updates !== false ? 'checked' : ''}><span>${isStaff() ? 'Email me when clients answer, sign, choose, request a visit, or send a message' : 'Email me when something needs my attention, and when the team sends a message'}</span></label>
+          ${isStaff() ? '' : `<label class="switch"><input type="checkbox" id="me-dig" ${S.me.email_digest !== false ? 'checked' : ''}><span>Send me “Your home this week” every Friday</span></label>`}</div>
         <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="me-save">Save</button></div>`); break;
     case 'me-save': {
-      const upd = { full_name: val('me-name') || null, phone: val('me-phone') || null }; if (isStaff()) upd.title = val('me-title') || null;
+      const upd = { full_name: val('me-name') || null, phone: val('me-phone') || null, email_updates: $('#me-upd').checked }; if (isStaff()) upd.title = val('me-title') || null; else upd.email_digest = $('#me-dig').checked;
       must(await sb.from('profiles').update(upd).eq('id', S.me.id)); Object.assign(S.me, upd); closeModal();
       if (S.pid && S.view !== 'homes') await refresh(['project_members']); else render(); toast('Saved'); break; }
     case 'bell': {
@@ -885,12 +910,12 @@ async function act(a, el) {
       const body = val('post-text'), phase = val('post-phase');
       if (!body && !S.draft.length) { const e = $('#post-err'); e.textContent = 'Add a photo or a few words.'; e.hidden = false; break; }
       el.textContent = S.draft.length ? 'Uploading' : 'Posting';
-      const up = must(await sb.from('updates').insert({ project_id: S.pid, phase_id: phase || null, author_id: S.me.id, body: body || null }).select().single());
+      const up = must(await sb.from('updates').insert({ project_id: S.pid, phase_id: phase || null, author_id: S.me.id, body: body || null, notify_now: !!$('#post-now')?.checked }).select().single());
       const rows = [];
       for (const [i, d] of S.draft.entries()) { const path = `${S.pid}/photos/${crypto.randomUUID()}.jpg`; await upload(path, d.blob, 'image/jpeg'); rows.push({ update_id: up.id, project_id: S.pid, path, position: i }); }
       if (rows.length) must(await sb.from('update_photos').insert(rows));
       await log(rows.length ? `shared ${rows.length} new photo${rows.length > 1 ? 's' : ''}` : 'posted an update', 'updates');
-      closeModal(); S.view = 'updates'; location.hash = '#updates'; await refresh(['updates','update_photos','activity']); toast('Posted'); break; }
+      const emailed = !!$('#post-now')?.checked; closeModal(); S.view = 'updates'; location.hash = '#updates'; await refresh(['updates','update_photos','activity']); toast(emailed ? `Posted. ${clientFirst()} will be emailed in the next few minutes.` : 'Posted. It will be in Friday’s email.'); break; }
     case 'up-del':
       if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; setTimeout(() => { if (el.isConnected) { el.dataset.confirm = ''; el.textContent = 'Delete'; } }, 3000); break; }
       { const paths = photosOf(id).map(p => p.path); if (paths.length) await sb.storage.from(BUCKET).remove(paths); must(await sb.from('updates').delete().eq('id', id)); await refresh(['updates','update_photos','update_comments','update_thanks']); toast('Deleted'); } break;
