@@ -87,6 +87,7 @@ async function upload(path, blob, contentType) {
   return path;
 }
 async function signPaths(paths) {
+  paths.filter(p => p && /^https?:\/\//.test(p)).forEach(p => { S.urls[p] = p; }); // images linked by web address are used as-is
   const need = [...new Set(paths.filter(p => p && !S.urls[p]))];
   if (!need.length) return;
   const { data } = await sb.storage.from(BUCKET).createSignedUrls(need, 60 * 60 * 6);
