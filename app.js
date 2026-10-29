@@ -215,6 +215,7 @@ const TABLES = {
   selection_options: q => q.order('position'),
   selection_favorites: q => q,
   wall_photos: q => q.order('created_at'),
+  home_items: q => q.order('position').order('created_at'),
   change_orders: q => q.order('number', { ascending: false }),
   draws: q => q.order('position'),
   events: q => q.order('starts_on'),
@@ -236,7 +237,7 @@ async function loadProject(pid, only) {
   if (!only || only.includes('project')) S.d.project = must(await sb.from('projects').select('*').eq('id', pid).single());
   const profs = must(await sb.from('profiles').select('id,full_name,title,phone,email,role,builder_id'));
   S.profiles = Object.fromEntries(profs.map(p => [p.id, p]));
-  await signPaths([...(S.d.update_photos || []).map(p => p.path), ...(S.d.wall_photos || []).map(p => p.path), ...(S.d.selection_options || []).map(o => o.image_path), S.d.project?.cover_path]);
+  await signPaths([...(S.d.update_photos || []).map(p => p.path), ...(S.d.wall_photos || []).map(p => p.path), ...(S.d.home_items || []).map(i => i.photo_path), ...(S.d.selection_options || []).map(o => o.image_path), S.d.project?.cover_path]);
   if (!only) {
     S.lastSeen = isStaff() ? store.get('portal.seen.' + pid) : S.d.project_members.find(m => m.user_id === S.me.id)?.last_seen_at;
     if (!S.ui.thread && S.d.threads[0]) S.ui.thread = S.d.threads[0].id;
@@ -280,7 +281,7 @@ function actionItems() {
 
 /* ================= chrome ================= */
 const PRIMARY = [['overview','Overview'],['timeline','Timeline'],['updates','From the site'],['decisions','Decisions'],['messages','Messages']];
-const MORE = [['diary','Photo diary'],['walls','Behind the walls'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['glossary','Glossary'],['team','Your team']];
+const MORE = [['diary','Photo diary'],['walls','Behind the walls'],['manual','Home manual'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['glossary','Glossary'],['team','Your team']];
 const DEC = [['questions','Questions'],['selections','Selections'],['changes','Change orders']];
 const isDec = v => DEC.some(d => d[0] === v);
 const ICONS = {
@@ -766,7 +767,7 @@ function vWalkthrough() {
       <section class="card" style="background:var(--navy);color:var(--navy-ink);border-color:transparent">
         <span class="eyebrow" style="color:var(--brass-bright)">${esc(L.closing)} and after</span>
         <p style="font-family:var(--f-display);font-size:20px;line-height:1.45;margin-top:10px">${esc(B.aftercare)}</p>
-        <a href="#diary" class="btn" style="margin-top:18px;border-color:var(--brass-bright);color:var(--navy-ink)">Open your photo diary</a>
+        <div class="row" style="margin-top:18px;gap:10px"><a href="#manual" class="btn" style="border-color:var(--brass-bright);color:var(--navy-ink)">Your home manual</a><a href="#diary" class="btn" style="border-color:var(--brass-bright);color:var(--navy-ink)">Your photo diary</a></div>
       </section>
     </div>
   </div>`;
@@ -950,7 +951,123 @@ function wallForm(room) {
 }
 const keepWallDraft = () => { S.wallDraftRoom = val('wf-room'); S.wallDraftCap = val('wf-cap'); };
 
-const VIEWS = { glossary: vGlossary, walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
+/* ================= home manual ================= */
+const WHOLE = 'Whole home';
+const manCats = () => B.manualCategories || ['Paint', 'Flooring', 'Tile & stone', 'Countertops', 'Cabinetry', 'Plumbing fixtures', 'Lighting', 'Appliances', 'Hardware', 'Systems', 'Other'];
+const manCare = c => (B.manualCare || {})[c] || '';
+const catRank = c => { const i = manCats().indexOf(c); return i < 0 ? 99 : i; };
+const byCat = (a, b) => catRank(a.category) - catRank(b.category) || a.position - b.position || String(a.created_at).localeCompare(String(b.created_at));
+// Guess a manual category from a selection's name ("Kitchen faucet" → Plumbing fixtures)
+function guessCat(t) {
+  t = (t || '').toLowerCase();
+  const rules = [['Paint', /paint|stain|color/], ['Countertops', /counter|quartz|marble|granite|quartzite|slab/], ['Tile & stone', /tile|stone|backsplash|mosaic/],
+    ['Flooring', /floor|hardwood|carpet|plank/], ['Cabinetry', /cabinet|vanity|millwork|built-in/], ['Plumbing fixtures', /faucet|plumb|sink|shower|tub|toilet|fixture/],
+    ['Lighting', /light|pendant|chandelier|sconce|fixture/], ['Appliances', /appliance|range|oven|refrigerator|fridge|dishwasher|hood|cooktop|wine/],
+    ['Hardware', /hardware|pull|knob|hinge|lever/], ['Windows & doors', /window|door/], ['Exterior', /roof|siding|brick|exterior|gutter/]];
+  const hit = rules.find(([, re]) => re.test(t)); return hit && manCats().includes(hit[0]) ? hit[0] : 'Other';
+}
+const itemMatches = (it, q) => [it.room, it.category, it.name, it.maker, it.product, it.detail].join(' ').toLowerCase().includes(q);
+function warrantyTag(it) {
+  if (!it.warranty_until) return '';
+  return D(it.warranty_until) < new Date() ? `<span class="tag">Warranty ended ${fd(it.warranty_until, { month: 'short', year: 'numeric' })}</span>`
+    : `<span class="tag good">Warranty to ${fd(it.warranty_until, { month: 'short', year: 'numeric' })}</span>`;
+}
+function manItem(it, showRoom) {
+  const img = it.photo_path ? (S.urls[it.photo_path] || (/^https?:/.test(it.photo_path) ? it.photo_path : '')) : '';
+  const doc = it.document_id && S.d.documents.find(d => d.id === it.document_id);
+  const line = [it.maker, it.product].filter(Boolean).map(esc).join(' · ');
+  return `<article class="man-item${img ? '' : ' no-img'}">
+    ${img ? `<button class="man-img" data-act="man-zoom" data-id="${it.id}" aria-label="Larger photo of ${esc(it.name)}"><img src="${esc(img)}" alt="" loading="lazy"></button>` : ''}
+    <div class="man-body">
+      <span class="eyebrow">${showRoom ? esc(it.room) + ' · ' : ''}${esc(it.category)}</span>
+      <h3>${esc(it.name)}</h3>
+      ${line ? `<div class="man-line">${line}</div>` : ''}
+      ${it.detail ? `<div class="small muted">${esc(it.detail)}</div>` : ''}
+      ${it.care ? `<details class="man-care"><summary>Care</summary><p>${gloss(it.care)}</p></details>` : ''}
+      <div class="row man-foot">${warrantyTag(it)}${doc ? `<button class="btn sm ghost" data-act="doc-open" data-id="${doc.id}">Manual</button>` : ''}${isStaff() ? `<button class="edit-link" data-act="man-edit" data-id="${it.id}">Edit</button>` : ''}</div>
+    </div></article>`;
+}
+function manRooms() {
+  const by = {};
+  (S.d.home_items || []).filter(i => i.room !== WHOLE).forEach(i => (by[i.room] = by[i.room] || []).push(i));
+  return Object.entries(by).sort((a, b) => a[0].localeCompare(b[0]));
+}
+const pendingSelections = () => {
+  const done = new Set((S.d.home_items || []).map(i => i.selection_id).filter(Boolean));
+  return S.d.selections.filter(s => s.chosen_option_id && ['submitted', 'approved'].includes(s.status) && !done.has(s.id));
+};
+function vManual() {
+  const all = S.d.home_items || [], room = S.ui.manRoom, q = (S.ui.manQ || '').trim().toLowerCase();
+  const pend = isStaff() ? pendingSelections().length : 0;
+  const head = pageHead('Home manual', 'Everything in your home, <span class="ital">room by room</span>',
+    `Paint colors, finishes, fixtures, appliances, and where the important things are. It grows as your home is finished and is complete at ${esc(L.closing.toLowerCase().startsWith('the') ? L.closing : 'the ' + L.closing)}.`,
+    isStaff() ? `<div class="row" style="justify-content:flex-end">${pend ? `<button class="btn" data-act="man-import">From selections <sup class="count">${pend}</sup></button>` : ''}<button class="btn primary" data-act="man-new">Add to manual</button></div>`
+      : all.length ? `<button class="btn" data-act="man-print">Print or save as PDF</button>` : '');
+  if (S.ui.manPrint) return manPrint();
+  if (!all.length) return head + `<div class="empty walls-empty">${isStaff()
+    ? `Record what goes into ${esc(clientFirst())}’s home as it’s installed: paint colors, tile, fixtures, appliances, and where the shut-offs and panel are. Chosen selections can be added in one step.<div class="row" style="justify-content:center;margin-top:16px">${pend ? `<button class="btn" data-act="man-import">Add ${pend} chosen selection${pend > 1 ? 's' : ''}</button>` : ''}<button class="btn primary" data-act="man-new">Add to manual</button></div>`
+    : 'As your home is finished, your team records every paint color, finish, fixture, and appliance here, room by room, along with where the shut-offs and panel are. It’s yours for as long as you own the home.'}</div>`;
+  const search = `<div class="man-search field"><input class="input" id="man-q" type="search" placeholder="Find a color, fixture, or room" value="${esc(S.ui.manQ || '')}" aria-label="Search your home manual" autocomplete="off"></div>`;
+  if (q) {
+    const hits = all.filter(i => itemMatches(i, q)).sort((a, b) => a.room.localeCompare(b.room) || byCat(a, b));
+    return head + search + `<div id="man-results">${hits.length ? `<div class="man-list">${hits.map(i => manItem(i, true)).join('')}</div>` : `<div class="empty">Nothing matches “${esc(S.ui.manQ)}”. <a href="#messages">Ask your team</a>.</div>`}</div>`;
+  }
+  if (room) {
+    const items = all.filter(i => i.room === room).sort(byCat), walls = (S.d.wall_photos || []).filter(w => w.room === room).length;
+    return head + `<div class="wall-room-head"><button class="linkbtn" data-act="man-room" data-v="">← All rooms</button><h2>${esc(room)}</h2>
+      ${walls ? `<button class="linkbtn" data-act="man-walls" data-v="${esc(room)}">Behind the walls (${walls})</button>` : ''}${isStaff() ? `<button class="btn sm" data-act="man-new" data-room="${esc(room)}">Add</button>` : ''}</div>
+      <div class="man-list">${items.map(i => manItem(i)).join('') || '<div class="empty">Nothing recorded in this room yet.</div>'}</div>`;
+  }
+  const ess = all.filter(i => i.room === WHOLE).sort(byCat), rooms = manRooms();
+  return head + search +
+    (ess.length ? `<section class="man-ess"><div class="sec-h"><h2>Where things are</h2><button class="linkbtn" data-act="man-room" data-v="${WHOLE}">All ${ess.length} →</button></div>
+      <div class="man-ess-grid">${ess.slice(0, 6).map(i => `<button class="man-ess-card" data-act="man-room" data-v="${WHOLE}"><span class="eyebrow">${esc(i.name)}</span><span>${esc(i.detail || [i.maker, i.product].filter(Boolean).join(' · ') || '—')}</span></button>`).join('')}</div></section>` : '') +
+    (rooms.length ? `<section><div class="sec-h"><h2>Rooms</h2><span class="aside">${rooms.length}</span></div><div class="man-rooms">${rooms.map(([r, its]) => {
+      const cats = [...new Set(its.sort(byCat).map(i => i.category))], paint = its.find(i => i.category === 'Paint');
+      return `<button class="man-room" data-act="man-room" data-v="${esc(r)}"><b>${esc(r)}</b><span class="small muted">${its.length} item${its.length > 1 ? 's' : ''} · ${cats.slice(0, 3).map(esc).join(', ')}${cats.length > 3 ? '…' : ''}</span>${paint ? `<span class="man-paint">${esc([paint.maker, paint.product].filter(Boolean).join(' '))}</span>` : ''}</button>`; }).join('')}</div></section>` : '');
+}
+function manPrint() {
+  const all = S.d.home_items || [], ess = all.filter(i => i.room === WHOLE).sort(byCat), rooms = manRooms();
+  const row = i => `<tr><td>${esc(i.category)}</td><td><b>${esc(i.name)}</b>${i.detail ? `<div>${esc(i.detail)}</div>` : ''}</td><td>${esc([i.maker, i.product].filter(Boolean).join(' · '))}</td><td>${i.warranty_until ? fd(i.warranty_until, { month: 'short', year: 'numeric' }) : ''}</td></tr>`;
+  const table = items => `<table class="man-table"><thead><tr><th>Category</th><th>Item</th><th>Maker & product</th><th>Warranty to</th></tr></thead><tbody>${items.map(row).join('')}</tbody></table>`;
+  return `<div class="man-print"><div class="man-print-head">${logoImg('man-logo')}<span class="eyebrow">Home manual</span><h1>${esc(P().name)}</h1><p class="muted">${esc(P().address || '')}</p></div>
+    ${ess.length ? `<section><h2>Where things are</h2>${table(ess)}</section>` : ''}
+    ${rooms.map(([r, its]) => `<section><h2>${esc(r)}</h2>${table(its.sort(byCat))}</section>`).join('')}
+    <p class="small muted" style="margin-top:24px">Care instructions, manuals, and photos for each item are in your portal. Prepared by ${esc(B.fullName)}, ${fdL(new Date().toISOString())}.</p></div>`;
+}
+function manForm(it) {
+  const d = S.manDraft, rooms = [...new Set([WHOLE, ...(S.d.home_items || []).map(i => i.room), ...(S.d.wall_photos || []).map(w => w.room), ...(B.wallRooms || [])])];
+  const isWhole = d.room === WHOLE, prev = S.manPhoto?.preview || (d.photo_path ? (S.urls[d.photo_path] || (/^https?:/.test(d.photo_path) ? d.photo_path : '')) : '');
+  return `<span class="eyebrow">Home manual</span><h2>${it ? 'Edit item' : d.room ? esc(d.room) : 'Add to the manual'}</h2>
+    <div class="form-grid">
+      <div class="field"><label for="mf-room">Room</label><input id="mf-room" list="mf-rooms" value="${esc(d.room || '')}" placeholder="Kitchen" autocomplete="off"><datalist id="mf-rooms">${rooms.map(r => `<option value="${esc(r)}">`).join('')}</datalist></div>
+      <div class="field"><label for="mf-cat">Category</label><select id="mf-cat">${manCats().map(c => `<option${c === d.category ? ' selected' : ''}>${esc(c)}</option>`).join('')}</select></div>
+      <div class="field full"><label for="mf-name">What it is</label><input id="mf-name" list="mf-names" value="${esc(d.name || '')}" placeholder="${isWhole ? 'Main water shut-off' : 'Walls, Range, Shower fixtures'}" autocomplete="off"><datalist id="mf-names">${(B.manualEssentials || []).map(r => `<option value="${esc(r)}">`).join('')}</datalist></div>
+      <div class="field"><label for="mf-maker">Brand or maker</label><input id="mf-maker" value="${esc(d.maker || '')}" placeholder="Benjamin Moore"></div>
+      <div class="field"><label for="mf-product">Color, model, or style</label><input id="mf-product" value="${esc(d.product || '')}" placeholder="Chantilly Lace OC-65"></div>
+      <div class="field full"><label for="mf-detail">Finish, size, serial, or location</label><input id="mf-detail" value="${esc(d.detail || '')}" placeholder="${isWhole ? 'Mechanical room, left of the water heater' : 'Eggshell, walls and ceiling'}"></div>
+      <div class="field full"><label for="mf-care">Care</label><textarea id="mf-care" rows="3">${esc(d.care ?? manCare(d.category))}</textarea></div>
+      <div class="field"><label for="mf-war">Warranty until (optional)</label><input id="mf-war" type="date" value="${esc(d.warranty_until || '')}"></div>
+      <div class="field"><label for="mf-doc">Manual or spec sheet</label><select id="mf-doc"><option value="">None</option>${S.d.documents.map(x => `<option value="${x.id}"${x.id === d.document_id ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}</select></div>
+    </div>
+    <div class="man-photo-row">${prev ? `<img id="mf-prev" src="${esc(prev)}" alt="">` : '<span id="mf-prev"></span>'}<label class="btn sm" for="mf-photo" style="position:relative">${prev ? 'Replace photo' : 'Add a photo'}<input type="file" id="mf-photo" accept="image/*" class="sr-file"></label></div>
+    <p class="inline-err" id="mf-err" hidden></p>
+    <div class="row wf-actions">${it ? `<button class="edit-link" data-act="man-del" data-id="${it.id}" style="margin-right:auto">Remove</button>` : `<button class="btn ghost" data-act="modal-close">Done</button>`}${it ? '<button class="btn ghost" data-act="modal-close">Cancel</button>' : '<button class="btn" data-act="man-save" data-next="1">Save &amp; add another</button>'}<button class="btn primary" data-act="man-save" data-id="${it ? it.id : ''}">Save</button></div>`;
+}
+const readManForm = () => Object.assign(S.manDraft, { room: val('mf-room'), category: $('#mf-cat').value, name: val('mf-name'), maker: val('mf-maker'), product: val('mf-product'),
+  detail: val('mf-detail'), care: $('#mf-care').value.trim(), warranty_until: $('#mf-war').value || null, document_id: $('#mf-doc').value || null });
+function importSheet() {
+  const list = pendingSelections();
+  return `<span class="eyebrow">Home manual</span><h2>Add chosen selections</h2>
+    <p class="small muted">Each chosen finish becomes a manual entry with its photo and a care note. Check the room for each; you can add serial numbers and manuals later.</p>
+    <div class="imp-list">${list.map(s => { const o = S.d.selection_options.find(x => x.id === s.chosen_option_id);
+      return `<label class="imp-row"><input type="checkbox" data-imp="${s.id}" checked><span class="imp-main"><b>${esc(s.category)}</b><span class="small muted">${esc(o?.name || '')}</span></span>
+        <input class="input imp-room" data-imp-room="${s.id}" value="${esc(s.area || '')}" placeholder="Room" aria-label="Room for ${esc(s.category)}" list="mf-rooms"></label>`; }).join('')}</div>
+    <datalist id="mf-rooms">${[...new Set([WHOLE, ...(S.d.home_items || []).map(i => i.room), ...(B.wallRooms || [])])].map(r => `<option value="${esc(r)}">`).join('')}</datalist>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" data-act="modal-close">Cancel</button><button class="btn primary" data-act="man-import-save">Add to manual</button></div>`;
+}
+
+const VIEWS = { manual: vManual, glossary: vGlossary, walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
 /* ================= note from the project manager ================= */
 function pmNote() {
@@ -1069,6 +1186,44 @@ async function act(a, el) {
         <img src="${esc(S.urls[w.path])}" alt="${esc(w.room)}" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">
         <div class="row" style="justify-content:space-between"><div class="row" style="gap:6px">${w.systems.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><span class="small muted">${list.length > 1 ? `${i + 1} of ${list.length} · ` : ''}Photographed ${fd(w.taken_on, { month: 'long', day: 'numeric', year: 'numeric' })}${isStaff() ? ` · <button class="edit-link" data-act="wall-del" data-id="${w.id}">Delete</button>` : ''}</span></div>`, true); break; }
     case 'term': showTerm(el); break;
+    case 'man-room': S.ui.manRoom = el.dataset.v || null; S.ui.manQ = ''; render(); window.scrollTo(0, 0); break;
+    case 'man-walls': S.ui.wallRoom = el.dataset.v; location.hash = 'walls'; break;
+    case 'man-print': S.ui.manPrint = true; render(); await new Promise(r => setTimeout(r, 350)); window.print(); S.ui.manPrint = false; render(); break;
+    case 'man-zoom': { const it = S.d.home_items.find(x => x.id === id), u = S.urls[it.photo_path] || it.photo_path;
+      modal(`<div class="spread"><div><span class="eyebrow">${esc(it.room)} · ${esc(it.category)}</span><h3 style="margin-top:6px">${esc(it.name)}</h3></div><button class="btn sm ghost" data-act="modal-close">Close</button></div>
+        <img src="${esc(u)}" alt="${esc(it.name)}" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">`, true); break; }
+    case 'man-new': S.manDraft = { room: el.dataset.room || S.ui.manRoom || '', category: el.dataset.room === WHOLE || S.ui.manRoom === WHOLE ? 'Systems' : manCats()[0] }; S.manPhoto = null; modal(manForm(null), true); break;
+    case 'man-edit': { const it = S.d.home_items.find(x => x.id === id); S.manDraft = { ...it }; S.manPhoto = null; modal(manForm(it), true); break; }
+    case 'man-save': {
+      readManForm(); const d = S.manDraft, err = $('#mf-err');
+      if (!d.room || !d.name) { err.textContent = !d.room ? 'Choose the room.' : 'Say what it is, for example “Walls” or “Range”.'; err.hidden = false; break; }
+      el.textContent = 'Saving';
+      let photo_path = d.photo_path || null;
+      if (S.manPhoto) { photo_path = `${S.pid}/manual/${crypto.randomUUID()}.jpg`; await upload(photo_path, S.manPhoto.blob, 'image/jpeg'); }
+      const row = { room: d.room, category: d.category, name: d.name, maker: d.maker || null, product: d.product || null, detail: d.detail || null, care: d.care || null,
+        warranty_until: d.warranty_until, document_id: d.document_id, photo_path };
+      if (el.dataset.id) must(await sb.from('home_items').update(row).eq('id', el.dataset.id));
+      else must(await sb.from('home_items').insert({ ...row, project_id: S.pid, position: (S.d.home_items || []).filter(i => i.room === d.room).length }));
+      const room = d.room, cat = d.category, isNew = !el.dataset.id;
+      await refresh(['home_items']);
+      if (el.dataset.next) { S.manDraft = { room, category: cat }; S.manPhoto = null; modal(manForm(null), true); $('#mf-name')?.focus(); toast(`Saved to ${room}`); }
+      else { closeModal(); if (isNew) { await log(`added to the home manual: ${room.toLowerCase()}`, 'manual'); await refresh(['activity']); } S.ui.manRoom = room; render(); toast(isNew ? `Saved to ${room}` : 'Saved'); }
+      break; }
+    case 'man-del': {
+      if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to remove'; break; }
+      const it = S.d.home_items.find(x => x.id === id);
+      if (it.photo_path?.includes('/manual/')) await sb.storage.from(BUCKET).remove([it.photo_path]);
+      must(await sb.from('home_items').delete().eq('id', id)); closeModal(); await refresh(['home_items']); toast('Removed'); break; }
+    case 'man-import': modal(importSheet(), true); break;
+    case 'man-import-save': {
+      const ids = [...document.querySelectorAll('[data-imp]:checked')].map(x => x.dataset.imp);
+      if (!ids.length) { toast('Check at least one selection'); break; }
+      const missing = ids.find(i => !$(`[data-imp-room="${i}"]`).value.trim()); if (missing) { toast('Add a room for each one'); $(`[data-imp-room="${missing}"]`).focus(); break; }
+      el.textContent = 'Adding';
+      const rows = ids.map((sid, n) => { const sel = S.d.selections.find(x => x.id === sid), o = S.d.selection_options.find(x => x.id === sel.chosen_option_id), cat = guessCat(sel.category + ' ' + (o?.name || ''));
+        return { project_id: S.pid, room: $(`[data-imp-room="${sid}"]`).value.trim(), category: cat, name: sel.category, product: o?.name || null, detail: o?.detail || null, care: manCare(cat) || null, photo_path: o?.image_path || null, selection_id: sid, position: 100 + n }; });
+      must(await sb.from('home_items').insert(rows)); closeModal();
+      await log(`added ${rows.length} selection${rows.length > 1 ? 's' : ''} to the home manual`, 'manual'); await refresh(['home_items', 'activity']); toast(`Added ${rows.length} to the manual`); break; }
     case 'gloss-jump': { const t = $(`#gg-${el.dataset.v}`); if (t) window.scrollTo({ top: t.getBoundingClientRect().top + scrollY - 90, behavior: 'smooth' }); break; }
     case 'wall-del': {
       if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; }
@@ -1423,6 +1578,7 @@ document.addEventListener('keydown', e => {
 window.addEventListener('scroll', () => hideTerm(), { passive: true });
 window.addEventListener('resize', () => hideTerm());
 document.addEventListener('input', e => {
+  if (e.target.id === 'man-q') { S.ui.manQ = e.target.value; const pos = e.target.selectionStart; render(true); const i = $('#man-q'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
   if (e.target.id === 'gloss-q') { S.ui.glossQ = e.target.value; $('#gloss-list').innerHTML = glossList(); }
   if (e.target.id === 'doc-q') { S.ui.docQ = e.target.value; $('#doc-rows').innerHTML = docRows(); }
   if (e.target.id === 'wall-q') { S.ui.wallQ = e.target.value; const pos = e.target.selectionStart; render(true); const i = $('#wall-q'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
@@ -1430,6 +1586,15 @@ document.addEventListener('input', e => {
 document.addEventListener('change', async e => {
   const t = e.target;
   try {
+    if (t.id === 'mf-photo' && t.files[0]) {
+      const blob = await compress(t.files[0], 1600); S.manPhoto = { blob, preview: URL.createObjectURL(blob) };
+      const pv = $('#mf-prev'); if (pv) pv.outerHTML = `<img id="mf-prev" src="${S.manPhoto.preview}" alt="">`; const lb = t.closest('label'); if (lb) lb.firstChild.textContent = 'Replace photo';
+    }
+    if (t.id === 'mf-cat') {
+      const care = $('#mf-care'), old = manCare(S.manDraft.category);
+      if (care && (!care.value.trim() || care.value.trim() === old)) care.value = manCare(t.value);
+      S.manDraft.category = t.value;
+    }
     if (t.id === 'wf-files') {
       keepWallDraft();
       for (const f of [...t.files].slice(0, 20)) { const blob = await compress(f); S.draft.push({ blob, preview: URL.createObjectURL(blob) }); }
@@ -1471,7 +1636,7 @@ window.addEventListener('hashchange', async () => {
   if (!VIEWS[h] && h !== 'decisions') return;
   if (!S.d && S.pid) await loadProject(S.pid);
   if (!S.d) return;
-  closeModal(); hideTerm(); if (resolveView(h) !== 'walls') S.ui.wallRoom = null; S.view = resolveView(h); render(); window.scrollTo(0, 0); if (S.view === 'glossary') focusTerm();
+  closeModal(); hideTerm(); if (resolveView(h) !== 'walls') S.ui.wallRoom = null; if (resolveView(h) !== 'manual') { S.ui.manRoom = null; S.ui.manQ = ''; } S.view = resolveView(h); render(); window.scrollTo(0, 0); if (S.view === 'glossary') focusTerm();
   if (h === 'messages') refresh(['messages']);
 });
 

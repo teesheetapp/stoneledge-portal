@@ -112,6 +112,27 @@ window.PORTAL = {
         "Foyer", "Stair hall", "Bonus room", "Garage", "Attic", "Mechanical room"],
       wallSystems: ["Plumbing", "Electrical", "HVAC", "Low-voltage", "Blocking"],
 
+      // Home manual: categories in the order shown, the essentials every home should list,
+      // and the care note pre-filled for each category (the team can edit it per item).
+      manualCategories: ["Paint", "Flooring", "Tile & stone", "Countertops", "Cabinetry", "Plumbing fixtures", "Lighting",
+        "Appliances", "Hardware", "Windows & doors", "Systems", "Exterior", "Other"],
+      manualEssentials: ["Main water shut-off", "Electrical panel", "Gas shut-off", "HVAC filters", "Water heater",
+        "Irrigation controller", "Network equipment", "Security panel", "Attic access", "Sump pump"],
+      manualCare: {
+        "Paint": "Keep the touch-up can labeled with the room. Spot-clean with a soft sponge and mild soap; avoid abrasive cleaners on flat finishes.",
+        "Flooring": "Sweep or vacuum weekly and clean with a pH-neutral cleaner. Felt pads under furniture; wipe spills promptly. Keep humidity between 35 and 55 percent for wood.",
+        "Tile & stone": "Clean with a pH-neutral stone cleaner. Avoid vinegar, citrus, and bleach on natural stone. Reseal grout and stone about once a year.",
+        "Countertops": "Use cutting boards and trivets. Wipe with warm water and mild soap. Natural stone: wipe acidic spills (wine, citrus) right away and reseal yearly.",
+        "Cabinetry": "Wipe with a soft, damp cloth and dry. Avoid harsh cleaners and let steam from appliances vent away from doors.",
+        "Plumbing fixtures": "Clean with warm water and a soft cloth. Avoid abrasive or acidic cleaners, which can damage the finish. Clean aerators every few months.",
+        "Lighting": "Turn off and let cool before cleaning. Dust with a dry microfiber cloth. Note the bulb type before replacing.",
+        "Appliances": "Register the warranty with the manufacturer. Follow the manual for filters and cleaning cycles.",
+        "Hardware": "Wipe with a soft, dry cloth. Living finishes (unlacquered brass, bronze) will patina naturally over time.",
+        "Windows & doors": "Clean tracks and weep holes each spring. Lubricate hinges and locks yearly. Check exterior caulk and weatherstripping each fall.",
+        "Systems": "Follow the service schedule in the manual. Replace filters on schedule and book an HVAC tune-up each spring and fall.",
+        "Exterior": "Rinse siding and stone yearly. Clean gutters each spring and fall. Check caulk at windows and trim each fall.",
+      },
+
       // Plain-English glossary. These words get a dotted underline wherever they appear in the portal;
       // tapping one explains it. "also" = other spellings to catch. "group" = where it sits on the Glossary page.
       glossary: [
