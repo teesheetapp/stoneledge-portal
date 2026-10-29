@@ -106,6 +106,12 @@ window.PORTAL = {
         { name: "The Closing", percent: 10 },
       ],
 
+      // Rooms suggested when photographing walls (the PM can type any other room)
+      wallRooms: ["Kitchen", "Scullery", "Great room", "Dining room", "Library", "Primary bedroom", "Primary bath", "Primary closet",
+        "Bedroom 2", "Bedroom 3", "Bedroom 4", "Guest suite", "Hall bath", "Powder room", "Laundry", "Mudroom", "Wine room",
+        "Foyer", "Stair hall", "Bonus room", "Garage", "Attic", "Mechanical room"],
+      wallSystems: ["Plumbing", "Electrical", "HVAC", "Low-voltage", "Blocking"],
+
       threads: ["Your project team", "Design Center"],
       documentFolders: ["Plans", "Permits & inspections", "Agreements", "Change orders", "Selections", "Invoices", "Warranty & manuals", "Lot & survey"],
       requestKinds: ["Private site visit", "Design Center session"],

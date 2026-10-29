@@ -200,6 +200,7 @@ const TABLES = {
   selections: q => q.order('due_date', { ascending: true, nullsFirst: false }),
   selection_options: q => q.order('position'),
   selection_favorites: q => q,
+  wall_photos: q => q.order('created_at'),
   change_orders: q => q.order('number', { ascending: false }),
   draws: q => q.order('position'),
   events: q => q.order('starts_on'),
@@ -221,7 +222,7 @@ async function loadProject(pid, only) {
   if (!only || only.includes('project')) S.d.project = must(await sb.from('projects').select('*').eq('id', pid).single());
   const profs = must(await sb.from('profiles').select('id,full_name,title,phone,email,role,builder_id'));
   S.profiles = Object.fromEntries(profs.map(p => [p.id, p]));
-  await signPaths([...(S.d.update_photos || []).map(p => p.path), ...(S.d.selection_options || []).map(o => o.image_path), S.d.project?.cover_path]);
+  await signPaths([...(S.d.update_photos || []).map(p => p.path), ...(S.d.wall_photos || []).map(p => p.path), ...(S.d.selection_options || []).map(o => o.image_path), S.d.project?.cover_path]);
   if (!only) {
     S.lastSeen = isStaff() ? store.get('portal.seen.' + pid) : S.d.project_members.find(m => m.user_id === S.me.id)?.last_seen_at;
     if (!S.ui.thread && S.d.threads[0]) S.ui.thread = S.d.threads[0].id;
@@ -265,7 +266,7 @@ function actionItems() {
 
 /* ================= chrome ================= */
 const PRIMARY = [['overview','Overview'],['timeline','Timeline'],['updates','From the site'],['decisions','Decisions'],['messages','Messages']];
-const MORE = [['diary','Photo diary'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['team','Your team']];
+const MORE = [['diary','Photo diary'],['walls','Behind the walls'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['team','Your team']];
 const DEC = [['questions','Questions'],['selections','Selections'],['changes','Change orders']];
 const isDec = v => DEC.some(d => d[0] === v);
 const ICONS = {
@@ -838,7 +839,65 @@ function emailPanel() {
   </section>`;
 }
 
-const VIEWS = { diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
+const SURFACES = ['North wall', 'East wall', 'South wall', 'West wall', 'Ceiling', 'Floor', 'Other'];
+const wallSystems = () => B.wallSystems || ['Plumbing', 'Electrical', 'HVAC', 'Low-voltage', 'Blocking'];
+// Photos in one room, in the order they appear on screen (by surface), respecting the system filter
+function roomPhotos(room) {
+  const rank = x => { const i = SURFACES.indexOf(x || 'Other'); return i < 0 ? 99 : i; };
+  return (S.d.wall_photos || []).filter(w => w.room === room && (!S.ui.wallSys || w.systems.includes(S.ui.wallSys)))
+    .sort((a, b) => rank(a.surface) - rank(b.surface) || String(a.taken_on).localeCompare(String(b.taken_on)) || String(a.created_at).localeCompare(String(b.created_at)));
+}
+function wallRooms() {
+  const ps = (S.d.wall_photos || []).filter(w => !S.ui.wallSys || w.systems.includes(S.ui.wallSys));
+  const q = (S.ui.wallQ || '').trim().toLowerCase();
+  const by = {};
+  ps.forEach(w => { if (!q || w.room.toLowerCase().includes(q)) (by[w.room] = by[w.room] || []).push(w); });
+  return Object.entries(by).sort((a, b) => a[0].localeCompare(b[0]));
+}
+function wallThumb(w) {
+  const url = S.urls[w.path];
+  return `<button class="ph wall-ph" data-act="wall-open" data-id="${w.id}" aria-label="${esc(w.room)}, ${esc(w.surface || 'photo')}">${url ? `<img src="${esc(url)}" alt="" loading="lazy">` : ''}
+    <span class="cap">${w.systems.map(t => `<i class="sys">${esc(t)}</i>`).join('')}${w.caption ? `<span>${esc(w.caption)}</span>` : ''}</span></button>`;
+}
+function vWalls() {
+  const all = S.d.wall_photos || [], room = S.ui.wallRoom;
+  const head = pageHead('Behind the walls', 'What’s inside <span class="ital">every wall</span>',
+    'Before insulation, your team photographed every wall, ceiling, and floor with the plumbing, wiring, ductwork, and blocking in place. Years from now, when you hang art or plan a renovation, look here first.',
+    isStaff() ? `<button class="btn primary" data-act="wall-new">Photograph walls</button>` : '');
+  if (!all.length) return head + `<div class="empty walls-empty">${isStaff()
+    ? `Walk the house before insulation and photograph each wall, ceiling, and floor. Choose the room, the wall, and what’s in it; ${esc(clientFirst())} will have it for as long as they own the home.<div style="margin-top:16px"><button class="btn primary" data-act="wall-new">Photograph walls</button></div>`
+    : 'Before insulation, your team photographs every wall so you’ll always know what’s behind it. The photos will appear here, room by room.'}</div>`;
+  const filters = `<div class="wall-filters"><div class="folders" style="margin:0">${['All', ...wallSystems()].map(t => `<button data-act="wall-sys" data-v="${esc(t)}" aria-pressed="${(S.ui.wallSys || 'All') === t}">${esc(t)}</button>`).join('')}</div>
+    ${!room ? `<div class="field" style="min-width:220px"><input class="input" id="wall-q" type="search" placeholder="Find a room" value="${esc(S.ui.wallQ || '')}" aria-label="Find a room"></div>` : ''}</div>`;
+  if (room) {
+    const ps = roomPhotos(room);
+    const groups = [...SURFACES, ...new Set(ps.map(w => w.surface || 'Other'))].filter((v, i, a) => a.indexOf(v) === i);
+    return head + filters + `<div class="wall-room-head"><button class="linkbtn" data-act="wall-room" data-v="">← All rooms</button><h2>${esc(room)}</h2>${isStaff() ? `<button class="btn sm" data-act="wall-new" data-room="${esc(room)}">Add photos</button>` : ''}</div>` +
+      (ps.length ? groups.map(g => { const gs = ps.filter(w => (w.surface || 'Other') === g); return gs.length ? `<section class="wall-group"><span class="eyebrow">${esc(g)}</span><div class="photos big">${gs.map(wallThumb).join('')}</div></section>` : ''; }).join('')
+        : `<div class="empty">No ${esc((S.ui.wallSys || '').toLowerCase())} photos in this room.</div>`);
+  }
+  const rooms = wallRooms();
+  return head + filters + (rooms.length ? `<div class="wall-rooms">${rooms.map(([r, ps]) => { const sys = [...new Set(ps.flatMap(w => w.systems))]; const url = S.urls[ps[0].path];
+    return `<button class="wall-room" data-act="wall-room" data-v="${esc(r)}"><span class="wr-img">${url ? `<img src="${esc(url)}" alt="" loading="lazy">` : ''}</span>
+      <span class="wr-body"><b>${esc(r)}</b><span class="small muted">${ps.length} photo${ps.length > 1 ? 's' : ''}${sys.length ? ' · ' + sys.map(esc).join(', ') : ''}</span></span></button>`; }).join('')}</div>`
+    : `<div class="empty">No rooms match.</div>`);
+}
+function wallForm(room) {
+  const known = [...new Set([...(S.d.wall_photos || []).map(w => w.room), ...(B.wallRooms || [])])];
+  const sys = S.wallDraftSys || [], surf = S.wallDraftSurface || '';
+  return `<span class="eyebrow">Behind the walls</span><h2>${room ? esc(room) : 'Photograph a wall'}</h2>
+    <div class="field"><label for="wf-room">Room</label><input id="wf-room" list="wf-rooms" value="${esc(room || '')}" placeholder="Primary bath" autocomplete="off"><datalist id="wf-rooms">${known.map(r => `<option value="${esc(r)}">`).join('')}</datalist></div>
+    <div class="field"><span>Which surface</span><div class="chips">${SURFACES.map(x => `<button type="button" class="chip" data-act="wf-surf" data-v="${x}" aria-pressed="${surf === x}">${x}</button>`).join('')}</div></div>
+    <div class="field"><span>What’s in it</span><div class="chips">${wallSystems().map(x => `<button type="button" class="chip" data-act="wf-sys" data-v="${esc(x)}" aria-pressed="${sys.includes(x)}">${esc(x)}</button>`).join('')}</div></div>
+    <label class="drop" for="wf-files" style="position:relative">${S.draft.length ? `${S.draft.length} photo${S.draft.length > 1 ? 's' : ''} ready · add more` : 'Take or choose photos'}<input type="file" id="wf-files" accept="image/*" multiple></label>
+    ${S.draft.length ? `<div class="thumbs">${S.draft.map(d => `<div class="ph" style="cursor:default"><img src="${d.preview}" alt=""></div>`).join('')}</div>` : ''}
+    <div class="field"><label for="wf-cap">Note (optional)</label><input id="wf-cap" value="${esc(S.wallDraftCap || '')}" placeholder="Shower valve at 48 in. to center"></div>
+    <p class="inline-err" id="wf-err" hidden></p>
+    <div class="row wf-actions"><button class="btn ghost" data-act="modal-close">Done</button><button class="btn" data-act="wf-save" data-next="1">Save &amp; next wall</button><button class="btn primary" data-act="wf-save">Save</button></div>`;
+}
+const keepWallDraft = () => { S.wallDraftRoom = val('wf-room'); S.wallDraftCap = val('wf-cap'); };
+
+const VIEWS = { walls: vWalls, diary: vDiary, overview: vOverview, timeline: vTimeline, updates: vUpdates, questions: vQuestions, messages: vMessages, selections: vSelections, changes: vChanges, budget: vBudget, calendar: vCalendar, documents: vDocuments, walkthrough: vWalkthrough, team: vTeam };
 
 /* ================= note from the project manager ================= */
 function pmNote() {
@@ -931,6 +990,36 @@ async function act(a, el) {
   switch (a) {
     case 'modal-close': closeModal(); break;
     case 'print': window.print(); break;
+    case 'wall-room': S.ui.wallRoom = el.dataset.v || null; render(); window.scrollTo(0, 0); break;
+    case 'wall-sys': S.ui.wallSys = el.dataset.v === 'All' ? null : el.dataset.v; render(true); break;
+    case 'wall-new': S.draft = []; S.wallDraftSys = []; S.wallDraftSurface = ''; S.wallDraftCap = ''; S.wallDraftRoom = el.dataset.room || S.ui.wallRoom || ''; modal(wallForm(S.wallDraftRoom)); break;
+    case 'wf-surf': keepWallDraft(); S.wallDraftSurface = S.wallDraftSurface === el.dataset.v ? '' : el.dataset.v; modal(wallForm(S.wallDraftRoom)); break;
+    case 'wf-sys': { keepWallDraft(); const v = el.dataset.v, a = S.wallDraftSys; S.wallDraftSys = a.includes(v) ? a.filter(x => x !== v) : [...a, v]; modal(wallForm(S.wallDraftRoom)); break; }
+    case 'wf-save': {
+      keepWallDraft(); const err = $('#wf-err');
+      if (!S.wallDraftRoom) { err.textContent = 'Choose the room first.'; err.hidden = false; break; }
+      if (!S.draft.length) { err.textContent = 'Add at least one photo.'; err.hidden = false; break; }
+      el.textContent = 'Uploading';
+      const rows = [];
+      for (const d of S.draft) { const path = `${S.pid}/walls/${crypto.randomUUID()}.jpg`; await upload(path, d.blob, 'image/jpeg');
+        rows.push({ project_id: S.pid, room: S.wallDraftRoom, surface: S.wallDraftSurface || null, systems: S.wallDraftSys, path, caption: S.wallDraftCap || null, uploaded_by: S.me.id }); }
+      must(await sb.from('wall_photos').insert(rows));
+      const n = rows.length, room = S.wallDraftRoom;
+      await refresh(['wall_photos']);
+      if (el.dataset.next) { S.draft = []; S.wallDraftSurface = ''; S.wallDraftCap = ''; modal(wallForm(room)); toast(`Saved ${n} photo${n > 1 ? 's' : ''}. Next wall in ${room}.`); }
+      else { closeModal(); await log(`photographed the walls in the ${room.toLowerCase()}`, 'walls'); await refresh(['activity']); S.ui.wallRoom = room; render(); toast(`Saved to ${room}`); }
+      break; }
+    case 'wall-open': {
+      const w = S.d.wall_photos.find(x => x.id === id), list = roomPhotos(w.room), i = list.findIndex(x => x.id === w.id);
+      modal(`<div class="spread"><div><span class="eyebrow">${esc(w.room)}${w.surface ? ' · ' + esc(w.surface) : ''}</span><h3 style="margin-top:6px">${w.caption ? esc(w.caption) : fd(w.taken_on, { month: 'long', day: 'numeric', year: 'numeric' })}</h3></div>
+          <div class="row">${i > 0 ? `<button class="btn sm ghost" data-act="wall-open" data-id="${list[i - 1].id}" aria-label="Previous photo">←</button>` : ''}${i < list.length - 1 ? `<button class="btn sm ghost" data-act="wall-open" data-id="${list[i + 1].id}" aria-label="Next photo">→</button>` : ''}<a class="btn sm ghost" href="${esc(S.urls[w.path])}" target="_blank" rel="noopener">Full size</a><button class="btn sm ghost" data-act="modal-close">Close</button></div></div>
+        <img src="${esc(S.urls[w.path])}" alt="${esc(w.room)}" style="width:100%;max-height:70vh;object-fit:contain;background:var(--surface-2)">
+        <div class="row" style="justify-content:space-between"><div class="row" style="gap:6px">${w.systems.map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div><span class="small muted">${list.length > 1 ? `${i + 1} of ${list.length} · ` : ''}Photographed ${fd(w.taken_on, { month: 'long', day: 'numeric', year: 'numeric' })}${isStaff() ? ` · <button class="edit-link" data-act="wall-del" data-id="${w.id}">Delete</button>` : ''}</span></div>`, true); break; }
+    case 'wall-del': {
+      if (el.dataset.confirm !== '1') { el.dataset.confirm = '1'; el.textContent = 'Tap again to delete'; break; }
+      const w = S.d.wall_photos.find(x => x.id === id);
+      await sb.storage.from(BUCKET).remove([w.path]); must(await sb.from('wall_photos').delete().eq('id', id));
+      closeModal(); await refresh(['wall_photos']); toast('Deleted'); break; }
     case 'note-pm':
       modal(`<span class="eyebrow">Note to ${esc(clientFirst())}</span><h2>What should they know?</h2>
         <p class="small muted">Shown at the top of their overview with today’s date. Keep it to a few sentences: what’s happening, what’s next, anything they should plan for.</p>
@@ -1276,10 +1365,16 @@ document.addEventListener('keydown', e => {
 });
 document.addEventListener('input', e => {
   if (e.target.id === 'doc-q') { S.ui.docQ = e.target.value; $('#doc-rows').innerHTML = docRows(); }
+  if (e.target.id === 'wall-q') { S.ui.wallQ = e.target.value; const pos = e.target.selectionStart; render(true); const i = $('#wall-q'); if (i) { i.focus(); i.setSelectionRange(pos, pos); } }
 });
 document.addEventListener('change', async e => {
   const t = e.target;
   try {
+    if (t.id === 'wf-files') {
+      keepWallDraft();
+      for (const f of [...t.files].slice(0, 20)) { const blob = await compress(f); S.draft.push({ blob, preview: URL.createObjectURL(blob) }); }
+      modal(wallForm(S.wallDraftRoom));
+    }
     if (t.id === 'post-files') {
       S.postText = val('post-text');
       for (const f of [...t.files].slice(0, 20)) { const blob = await compress(f); S.draft.push({ blob, preview: URL.createObjectURL(blob) }); }
@@ -1316,7 +1411,7 @@ window.addEventListener('hashchange', async () => {
   if (!VIEWS[h] && h !== 'decisions') return;
   if (!S.d && S.pid) await loadProject(S.pid);
   if (!S.d) return;
-  closeModal(); S.view = resolveView(h); render(); window.scrollTo(0, 0);
+  closeModal(); if (resolveView(h) !== 'walls') S.ui.wallRoom = null; S.view = resolveView(h); render(); window.scrollTo(0, 0);
   if (h === 'messages') refresh(['messages']);
 });
 

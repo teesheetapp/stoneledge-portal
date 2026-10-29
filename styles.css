@@ -592,3 +592,28 @@ h1{font-size:clamp(38px,5.4vw,62px)}
 @media (max-width:720px){ .allow{padding:0 16px} .allow-sum{text-align:left} .opts .sw{height:130px} }
 .compare img,.compare .sw{height:180px;aspect-ratio:auto;width:100%;object-fit:cover}
 .allow .tablewrap table{min-width:540px}
+
+/* ===== behind the walls ===== */
+.wall-filters{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:28px}
+.wall-rooms{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
+.wall-room{border:1px solid var(--line);background:var(--surface);padding:0;text-align:left;cursor:pointer;display:flex;flex-direction:column}
+.wall-room:hover{border-color:var(--brass)}
+.wr-img{display:block;aspect-ratio:4/3;background:var(--surface-2);overflow:hidden}
+.wr-img img{width:100%;height:100%;object-fit:cover;display:block}
+.wr-body{display:flex;flex-direction:column;gap:3px;padding:14px 16px 16px}
+.wr-body b{font-family:var(--f-display);font-weight:500;font-size:21px}
+.wall-room-head{display:flex;align-items:baseline;gap:18px;flex-wrap:wrap;margin-bottom:20px}
+.wall-room-head h2{flex:1}
+.wall-group{margin-bottom:30px}
+.wall-group .eyebrow{display:block;margin-bottom:10px}
+.wall-ph .cap{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.wall-ph .cap span{width:100%;margin-top:3px}
+.sys{font-style:normal;font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;background:rgba(0,0,0,.45);padding:2px 6px}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--line);background:none;padding:7px 12px;font-size:13.5px;cursor:pointer;color:var(--ink);text-transform:none;letter-spacing:0}
+.chip[aria-pressed="true"]{background:var(--btn);border-color:var(--btn);color:var(--btn-ink)}
+.walls-empty{font-family:var(--f-body);font-style:normal;max-width:640px;margin:0 auto}
+.wall-group .photos.big{grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
+.wall-room-head{align-items:center}
+.wf-actions{justify-content:flex-end}
+@media (max-width:560px){.wf-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.wf-actions .btn{width:100%;justify-content:center}.wf-actions .btn.primary{grid-column:1/-1;order:-1}}
