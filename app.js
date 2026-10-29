@@ -163,7 +163,7 @@ async function start(skipFlow) {
   else if (!isStaff() || S.projects.length === 1) S.pid = S.projects[0]?.id || null;
 
   if (isStaff() && (!S.pid || hash === 'homes')) S.view = 'homes';
-  else S.view = VIEWS[hash] ? hash : 'overview';
+  else S.view = resolveView(hash);
   if (S.pid && S.view !== 'homes') await loadProject(S.pid);
   render();
   clearInterval(S.poll);
@@ -257,40 +257,78 @@ function actionItems() {
 }
 
 /* ================= chrome ================= */
-const NAV = [['overview','Overview'],['timeline','Timeline'],['updates','From the site'],['questions','Decisions'],['selections','Selections'],['changes','Change orders'],['messages','Messages'],['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['team','Your team']];
+const PRIMARY = [['overview','Overview'],['timeline','Timeline'],['updates','From the site'],['decisions','Decisions'],['messages','Messages']];
+const MORE = [['calendar','Calendar'],['budget','Financials'],['documents','Documents'],['walkthrough','Notes & aftercare'],['team','Your team']];
+const DEC = [['questions','Questions'],['selections','Selections'],['changes','Change orders']];
+const isDec = v => DEC.some(d => d[0] === v);
+const ICONS = {
+  overview: '<path d="M4 11l8-6 8 6"/><path d="M6 10v9h12v-9"/>',
+  updates: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  decisions: '<path d="M5 12l4 4 10-10"/>',
+  messages: '<path d="M4 5h16v11H9l-5 4z"/>',
+  more: '<circle cx="6" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18" cy="12" r="1.2"/>',
+};
+const icon = k => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[k]}</svg>`;
 function badgeFor(v) {
   if (!S.d) return 0;
   if (v === 'questions') return openQs().length;
   if (v === 'changes') return pendingCOs().length;
   if (v === 'selections') return isStaff() ? S.d.selections.filter(s => s.status === 'submitted').length : selDueSoon().length;
+  if (v === 'decisions') return DEC.reduce((a, d) => a + badgeFor(d[0]), 0);
   if (v === 'walkthrough' && isStaff()) return S.d.notes.filter(n => !n.reviewed).length;
   if (v === 'calendar' && isStaff()) return S.d.events.filter(e => e.status === 'requested').length;
+  if (v === 'more') return MORE.reduce((a, m) => a + badgeFor(m[0]), 0);
   return 0;
 }
+// Which page a link opens. "decisions" lands on the tab that needs attention first.
+function resolveView(h) {
+  if (h === 'decisions') return DEC.find(d => badgeFor(d[0]))?.[0] || 'questions';
+  return VIEWS[h] ? h : 'overview';
+}
+const isCur = v => v === S.view || (v === 'decisions' && isDec(S.view));
 function chrome() {
   const inHome = S.view !== 'homes' && S.d;
-  const nav = inHome ? (isStaff() ? [['homes','All homes'], ...NAV] : NAV) : (isStaff() ? [['homes','All homes']] : []);
+  const moreCur = MORE.find(m => m[0] === S.view);
+  const link = ([v, l]) => { const b = badgeFor(v); return `<a href="#${v}" ${isCur(v) ? 'aria-current="page"' : ''}>${l}${b ? `<sup>${b}</sup>` : ''}</a>`; };
+  const moreBadge = badgeFor('more');
+  const nav = inHome ? `${isStaff() ? link(['homes','All homes']) : ''}${PRIMARY.map(link).join('')}
+      <span class="more"><button class="more-btn" data-act="more" aria-haspopup="true" ${moreCur ? 'aria-current="page"' : ''}>${moreCur ? esc(moreCur[1]) : 'More'}${moreBadge ? `<sup>${moreBadge}</sup>` : ''}<svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5l3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.2"/></svg></button>
+      <div class="pop more-pop" id="more-pop" hidden>${MORE.map(([v, l]) => { const b = badgeFor(v); return `<a href="#${v}" class="pop-item">${l}${b ? `<sup>${b}</sup>` : ''}</a>`; }).join('')}</div></span>`
+    : (isStaff() ? link(['homes','All homes']) : '');
+  const tab = (v, l) => { const b = badgeFor(v); return `<a href="#${v}" ${isCur(v) ? 'aria-current="page"' : ''}>${icon(v)}<span>${l}</span>${b ? `<i class="tb-badge">${b}</i>` : ''}</a>`; };
   return `
   <header class="mast"><div class="wrap">
     <div class="mast-row">
       ${wordmark()}
-      <div class="mast-center">${inHome ? esc(P().name) : isStaff() ? esc(B.fullName) : ''}</div>
       <div class="mast-right">
-        ${inHome ? `<div style="position:relative"><button class="iconbtn" data-act="bell" aria-label="Notifications" id="bell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>${unseen().length ? '<span class="dot"></span>' : ''}</button><div class="pop" id="pop" hidden></div></div>` : ''}
-        <div class="acct"><button class="acct-btn" data-act="acct" aria-label="Your account"><span class="av ${isStaff() ? '' : 'owner'}">${ini(S.me.full_name || S.me.email)}</span><span class="nm">${esc(S.me.full_name || S.me.email)}</span></button><div class="pop" id="acct-pop" hidden></div></div>
+        ${inHome ? `<div style="position:relative"><button class="iconbtn" data-act="bell" aria-label="Notifications" id="bell"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>${unseen().length ? '<span class="dot"></span>' : ''}</button><div class="pop" id="pop" hidden></div></div>` : ''}
+        <div class="acct"><button class="acct-btn" data-act="acct" aria-label="Your account"><span class="av ${isStaff() ? '' : 'owner'}">${ini(S.me.full_name || S.me.email)}</span></button><div class="pop" id="acct-pop" hidden></div></div>
       </div>
     </div>
-    ${nav.length ? `<div class="navrow"><nav class="nav" aria-label="Sections">${nav.map(([v,l]) => { const b = badgeFor(v); return `<a href="#${v}" ${S.view === v ? 'aria-current="page"' : ''}>${l}${b ? `<sup>${b}</sup>` : ''}</a>`; }).join('')}</nav></div>` : ''}
-  </div></header>`;
+    ${nav ? `<div class="navrow"><nav class="nav" aria-label="Sections">${nav}</nav></div>` : ''}
+  </div></header>
+  ${inHome ? `<nav class="tabbar" aria-label="Sections">${tab('overview','Home')}${tab('updates','Updates')}${tab('decisions','Decisions')}${tab('messages','Messages')}
+    <button data-act="more-sheet" ${moreCur || S.view === 'timeline' ? 'aria-current="page"' : ''}>${icon('more')}<span>More</span>${moreBadge ? `<i class="tb-badge">${moreBadge}</i>` : ''}</button></nav>` : ''}`;
 }
 function pageHead(eyebrow, title, intro, aside = '') {
+  if (S.embed) return aside ? `<div class="subhead"><span></span><div>${aside}</div></div>` : '';
   return `<div class="page-h"><div><span class="eyebrow">${eyebrow}</span><h1>${title}</h1>${intro ? `<p>${intro}</p>` : ''}</div>${aside ? `<div>${aside}</div>` : ''}</div>`;
+}
+function vDecisions() {
+  const waiting = badgeFor('decisions');
+  const head = isStaff()
+    ? pageHead('Decisions', `Waiting on <span class="ital">${esc(clientFirst())}</span>`, 'Questions, selections, and change orders for this home, in one place.')
+    : pageHead('Decisions', waiting ? `${waiting === 1 ? 'One thing' : (['Two','Three','Four','Five','Six','Seven','Eight','Nine'][waiting - 2] || waiting) + ' things'} <span class="ital">${waiting === 1 ? 'needs' : 'need'} you</span>` : 'All caught <span class="ital">up</span>',
+      'Every choice we need from you, with when it’s needed and why. Your answers are kept here as a permanent record.');
+  const tabs = `<div class="dtabs" role="tablist">${DEC.map(([v, l]) => { const b = badgeFor(v); return `<a href="#${v}" role="tab" aria-selected="${S.view === v}" ${S.view === v ? 'aria-current="page"' : ''}>${l}${b ? `<sup>${b}</sup>` : ''}</a>`; }).join('')}</div>`;
+  S.embed = true; let body; try { body = VIEWS[S.view](); } finally { S.embed = false; }
+  return head + tabs + body;
 }
 const editBtn = (act, id, label = 'Edit') => isStaff() ? `<button class="edit-link" data-act="${act}" ${id ? `data-id="${id}"` : ''}>${label}</button>` : '';
 
 function render(keepScroll) {
   const y = window.scrollY;
-  const v = S.view === 'homes' ? vHomes() : (S.d ? VIEWS[S.view]() : '');
+  const v = S.view === 'homes' ? vHomes() : !S.d ? '' : isDec(S.view) ? vDecisions() : VIEWS[S.view]();
   $('#app').innerHTML = chrome() + `<main class="wrap" id="view">${v}</main>` +
     (isStaff() && S.d && S.view !== 'homes' ? `<button class="fab" data-act="post-open" aria-label="Post an update"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span>Post update</span></button>` : '');
   if (keepScroll) window.scrollTo(0, y);
@@ -354,13 +392,13 @@ function vOverview() {
     <div class="hero-top">
       <div><span class="eyebrow">${greet}</span>
         <h1>${esc(nameParts.join(' '))} <em>${esc(last)}</em></h1>
-        <p class="sub">${[p.lot, p.address].filter(Boolean).map(esc).join(' · ')}${p.summary ? '<br>' + esc(p.summary) : ''}</p>
+        <p class="sub">${[p.lot || p.address, p.summary].filter(Boolean).map(esc).join(' · ')}</p>
         ${isStaff() ? `<div class="row" style="margin-top:14px;gap:18px">${editBtn('home-edit', null, 'Edit details')}<label class="edit-link" for="cover-up">${p.cover_path ? 'Replace rendering' : 'Add a rendering'}<input type="file" id="cover-up" accept="image/*" hidden></label></div>` : ''}</div>
       ${dm !== null ? `<div class="count"><div class="n num">${Math.max(dm, 0)}</div><div class="l">${esc(L.daysUntil)}</div><div class="d">${fdL(p.closing_date)}</div></div>` : ''}
     </div>
     ${p.cover_path && S.urls[p.cover_path] ? `<img class="cover-img" src="${esc(S.urls[p.cover_path])}" alt="Rendering of ${esc(p.name)}">` : ELEV}
-    <div class="rail" style="grid-template-columns:repeat(${S.d.phases.length || 1},minmax(0,1fr))" aria-label="Build progress by phase">${S.d.phases.map((ph, i) => `<div class="${ph.status === 'current' ? 'cur' : ph.status}" title="${esc(ph.name)}"><i></i><span>${rom(i)}</span></div>`).join('')}</div>
-    <div class="rail-foot"><span>${cp ? `Phase <b>${rom(S.d.phases.indexOf(cp))}</b> of ${rom(S.d.phases.length - 1)} · <b>${esc(short(cp.name))}</b>${cp.end_date ? ' · through ' + fd(cp.end_date) : ''}` : 'Schedule not set'}</span><span><b class="num">${progressOf(S.d.phases)}%</b> complete${p.start_date ? ' · begun ' + fdL(p.start_date) : ''}</span></div>
+    <div class="rail" style="grid-template-columns:repeat(${S.d.phases.length || 1},minmax(0,1fr))" aria-label="Build progress by phase">${S.d.phases.map(ph => `<div class="${ph.status === 'current' ? 'cur' : ph.status}" title="${esc(ph.name)}"><i></i></div>`).join('')}</div>
+    <div class="rail-foot"><span>${cp ? `<span class="ital now">${rom(S.d.phases.indexOf(cp))}</span> ${esc(short(cp.name))}${cp.end_date ? ` <span class="muted-h">· through ${fd(cp.end_date)}</span>` : ''}` : 'Schedule to be set'}</span><a href="#timeline" class="rail-link"><b class="num">${progressOf(S.d.phases)}%</b> complete →</a></div>
   </section>
 
   <div class="grid2">
@@ -670,6 +708,7 @@ function vTeam() {
     </section>
     <section class="card"><span class="eyebrow">${esc(B.fullName)}</span>
       <p style="margin:12px 0 6px">${esc(B.office.address)}</p><p class="small muted">${esc(B.office.hours)}</p>
+      ${P().address ? `<div class="copyline" style="margin-top:14px"><span class="muted caps">Site</span><span>${esc(P().address)}</span></div>` : ''}
       ${P().permit ? `<div class="copyline" style="margin-top:14px"><span class="muted caps">Permit</span><span>${esc(P().permit)}</span></div>` : ''}
       ${isStaff() ? `<div style="margin-top:16px">${editBtn('home-edit', null, 'Edit site access & permit')}</div>` : ''}</section>
   </div>`;
@@ -712,6 +751,11 @@ async function act(a, el) {
   const id = el.dataset.id;
   switch (a) {
     case 'modal-close': closeModal(); break;
+    case 'more': { const pop = $('#more-pop'); pop.hidden = !pop.hidden; break; }
+    case 'more-sheet': {
+      const items = [['timeline','Timeline'], ...MORE, ...(isStaff() ? [['homes','All homes']] : [])];
+      modal(`<span class="eyebrow">${esc(P().name)}</span><nav class="sheet-list">${items.map(([v, l]) => { const b = badgeFor(v); return `<a href="#${v}" ${isCur(v) ? 'aria-current="page"' : ''}><span>${l}</span>${b ? `<sup>${b}</sup>` : '<span class="go">→</span>'}</a>`; }).join('')}</nav>`);
+      $('#modal .dialog').classList.add('sheet'); break; }
     case 'signout': await sb.auth.signOut(); location.hash = ''; location.reload(); break;
     case 'forgot': {
       const email = val('li-email'); if (!email) { toast('Enter your email first'); $('#li-email').focus(); break; }
@@ -974,8 +1018,9 @@ async function sendMsg() {
 
 /* ================= events ================= */
 document.addEventListener('click', async e => {
+  if (e.target.closest('.sheet-list a')) closeModal();
   const el = e.target.closest('[data-act]');
-  ['#pop', '#acct-pop'].forEach(s => { const p = $(s); if (p && !p.hidden && !e.target.closest(s) && !e.target.closest(s === '#pop' ? '#bell' : '.acct-btn')) p.hidden = true; });
+  [['#pop','#bell'], ['#acct-pop','.acct-btn'], ['#more-pop','.more-btn']].forEach(([s, t]) => { const p = $(s); if (p && !p.hidden && !e.target.closest(s) && !e.target.closest(t)) p.hidden = true; });
   if (!el || el.disabled || el.dataset.busy) return;
   if (el.tagName === 'A') return;
   el.dataset.busy = '1'; if (el.tagName === 'BUTTON') el.disabled = true;
@@ -1028,10 +1073,10 @@ window.addEventListener('hashchange', async () => {
   const h = location.hash.slice(1);
   if (h.includes('access_token') || !S.me) return;
   if (h === 'homes' && isStaff()) { S.view = 'homes'; await loadProjects(); render(); window.scrollTo(0, 0); return; }
-  if (!VIEWS[h]) return;
+  if (!VIEWS[h] && h !== 'decisions') return;
   if (!S.d && S.pid) await loadProject(S.pid);
   if (!S.d) return;
-  S.view = h; render(); window.scrollTo(0, 0);
+  closeModal(); S.view = resolveView(h); render(); window.scrollTo(0, 0);
   if (h === 'messages') refresh(['messages']);
 });
 
