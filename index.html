@@ -12,14 +12,17 @@
 <meta name="theme-color" content="#2A2D2F">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="styles.css?v=202610291639">
-<script src="config.js?v=202610291639"></script>
+<!-- Portal engine 1.0.0 (shared by every builder). To upgrade, change the commit id after portal-engine@ in both lines. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/teesheetapp/portal-engine@e00cc990cb5442b199f38bae9306e450efd1ea76/styles.css">
+<!-- This builder's own look, settings, and pages -->
+<link rel="stylesheet" href="theme.css?v=202611072155">
+<script src="settings.js?v=202611072155"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
 </head>
 <body>
 <div id="app"><div class="boot">Loading</div></div>
 <div id="modal" hidden></div>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
-<script src="app.js?v=202610291639"></script>
+<script src="https://cdn.jsdelivr.net/gh/teesheetapp/portal-engine@e00cc990cb5442b199f38bae9306e450efd1ea76/app.js"></script>
 </body>
 </html>
