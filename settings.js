@@ -206,13 +206,19 @@ window.PORTAL = {
     // density: "airy" | "compact"            headings: "caps" | "bold"   texture: "paper"
     theme: {},
 
-    // ---- Sign-in page (optional): add a photo to get a split-screen welcome ----
-    // signin: { photo: "logos/signin.jpg", headline: "Welcome <span class='ital'>home</span>", text: "…", caption: "…" },
+    // ---- Sign-in page: their own photograph, split screen ----
+    signin: {
+      photo: "https://stoneledge.life/wp-content/uploads/2026/04/stoneledge-luxury-home-greenville-sc.jpg",
+      headline: "Welcome <span class='ital'>home</span>",
+      text: "Sign in to follow your home from first drawings to the day you receive your keys.",
+      captionEyebrow: "Stoneledge Luxury Homes",
+      caption: "Artisans of custom luxury homes in Greenville and across South Carolina.",
+    },
+
+    // ---- Stoneledge-only pages are in pages.js ----
 
     // ---- Rename sections (optional), e.g. { walkthrough: "Punch list" } ----
     // navLabels: {},
 
-    // ---- Pages only this builder has (optional) ----
-    // pages: [{ id: "process", label: "Our process", where: "more", who: "all", title: "How we <span class='ital'>build</span>", html: "<p>…</p>" }],
   },
 };
